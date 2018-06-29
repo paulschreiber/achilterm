@@ -3,7 +3,7 @@ Achilterm
 
 **Achilterm** is a lightweight **UTF-8** web based terminal.
 
-.. image:: https://raw.githubusercontent.com/fgallaire/achilterm/master/img/achilterm.png
+![Achilterm](https://gitlab.com/fgallaire/achilterm/raw/master/img/achilterm.png)
 
 Achilterm is written in Python (and some AJAX javascript for client
 side).
@@ -14,28 +14,28 @@ Solaris, cygwin and any Unix that runs Python.
 Achilterm is initially forked from Ajaxterm which was inspired by
 Anyterm.
 
-Achilterm is developed by Florent Gallaire fgallaire@gmail.com.
+Achilterm is developed by Florent Gallaire <f@gallai.re>
 
-Website: http://fgallaire.github.io/achilterm.
+Website: <https://achilterm.gallai.re>
 
 Download and Install
 --------------------
 
-To install the last stable version from PyPI::
+To install the last stable version from PyPI:
 
     $ sudo pip install achilterm
 
-To install the development version from GitHub::
+To install the development version from GitLab:
 
-    $ git clone https://github.com/fgallaire/achilterm
+    $ git clone https://gitlab.com/fgallaire/achilterm
     $ cd achilterm
     $ sudo python setup.py install
 
-To run Achilterm after installation::
+To run Achilterm after installation:
 
     $ achilterm
 
-To run Achilterm from the source without installation::
+To run Achilterm from the source without installation:
 
     $ ./achilterm/achilterm.py
 
@@ -67,12 +67,10 @@ Achiltermlite
 
 Achiltermlite is a stripped-down client-side version of Achilterm.
 
-.. image:: https://raw.githubusercontent.com/fgallaire/achilterm/master/img/achiltermlite.png
+![Achiltermlite](https://gitlab.com/fgallaire/achilterm/raw/master/img/achiltermlite.png)
 
 Commandline usage
 -----------------
-
-::
 
     usage: achilterm [options]
 
@@ -94,8 +92,6 @@ Commandline usage
 
 Configuration example
 ---------------------
-
-::
 
         Listen 443
         NameVirtualHost *:443
