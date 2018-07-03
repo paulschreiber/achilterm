@@ -1,5 +1,6 @@
 theme: jekyll-theme-hacker
 google_analytics: UA-6780238-4
+baseurl: /achilterm
 title: Achilterm
 description: Achilterm is a lightweight UTF-8 web based terminal.
 show_downloads: true

@@ -16,7 +16,7 @@ Anyterm.
 
 Achilterm is developed by Florent Gallaire <f@gallai.re>
 
-Website: <https://achilterm.gallai.re>
+Website: <https://f.gallai.re/achilterm>
 
 Download and Install
 --------------------
