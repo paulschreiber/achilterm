@@ -5,8 +5,10 @@ title: Achilterm
 description: Achilterm is a lightweight UTF-8 web based terminal.
 show_downloads: true
 repository: fgallaire/achilterm
-github:
+gitlab:
+  is_project_page: true
   repository_url: https://gitlab.com/fgallaire/achilterm
+  owner_name: fgallaire
   owner_url: https://f.gallai.re
   zip_url: https://gitlab.com/fgallaire/achilterm/-/archive/master/achilterm-master.zip
   tar_url: https://gitlab.com/fgallaire/achilterm/-/archive/master/achilterm-master.tar.gz
