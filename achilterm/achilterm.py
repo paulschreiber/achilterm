@@ -21,7 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 __version__ = '0.21'
 
-import array,cgi,fcntl,glob,mimetypes,optparse,os,pty,random,re,signal,select,sys,threading,time,termios,struct,pwd
+import array,fcntl,glob,html,mimetypes,optparse,os,pty,random,re,signal,select,sys,threading,time,termios,struct,pwd
 
 import webob
 from socket import gethostname
@@ -343,7 +343,7 @@ class Terminal:
 				if len(span):
 					if PY2:
 						span = span.encode('utf-8')
-					r+='<span class="f%d b%d">%s</span>'%(span_fg,span_bg,cgi.escape(span))
+					r+='<span class="f%d b%d">%s</span>'%(span_fg,span_bg,html.escape(span))
 				span=""
 				span_bg,span_fg=bg,fg
 			if c == 0:
