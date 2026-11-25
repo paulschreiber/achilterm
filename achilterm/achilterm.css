@@ -62,3 +62,7 @@ body { background-color: #888; }
 #term {
 	float: left;
 }
+p.source {
+	margin: 4px;
+	font: 11px sans-serif;
+}
