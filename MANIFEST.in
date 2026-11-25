@@ -2,3 +2,5 @@ recursive-include achilterm *html *js *css
 graft img
 include COPYING
 include achilterm.service
+include achilterm.1
+include tests/smoke_test.py

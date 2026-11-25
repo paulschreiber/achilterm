@@ -3,7 +3,7 @@ Achilterm
 
 **Achilterm** is a lightweight **UTF-8** web based terminal.
 
-![Achilterm](https://gitlab.com/paulschreiber/achilterm/raw/master/img/achilterm.png)
+![Achilterm](https://raw.githubusercontent.com/paulschreiber/achilterm/master/img/achilterm.png)
 
 Achilterm is written in Python (and some AJAX javascript for client
 side).
@@ -14,22 +14,35 @@ Solaris, cygwin and any Unix that runs Python.
 Achilterm is initially forked from Ajaxterm which was inspired by
 Anyterm.
 
-Achilterm is developed by Florent Gallaire <f@gallai.re>
+Achilterm was developed by Florent Gallaire <f@gallai.re>
 
-Website: <https://f.gallai.re/achilterm>
+Original website: <https://f.gallai.re/achilterm>
+
+About achilterm-ng
+------------------
+
+``achilterm-ng`` is a modified version of Achilterm, maintained by Paul
+Schreiber since November 2026. It installs the same ``achilterm`` command and
+Python module, so don't install it alongside the original ``achilterm``
+package. See the [changelog](#changelog) for what's different.
+
+Source and bug reports: <https://github.com/paulschreiber/achilterm>
 
 Download and Install
 --------------------
 
-To install the latest release from GitLab:
+To install the latest release from PyPI into its own virtual environment:
 
-    $ sudo pip install git+https://gitlab.com/paulschreiber/achilterm.git@v0.30
+    $ sudo python3 -m venv /opt/achilterm
+    $ sudo /opt/achilterm/bin/pip install achilterm-ng
+    $ sudo ln -s /opt/achilterm/bin/achilterm /usr/local/bin/achilterm
 
-To install the development version from GitLab:
+To install the development version from GitHub:
 
-    $ git clone https://gitlab.com/paulschreiber/achilterm.git
+    $ git clone https://github.com/paulschreiber/achilterm.git
     $ cd achilterm
-    $ sudo python setup.py install
+    $ python3 -m venv .venv
+    $ .venv/bin/pip install .
 
 To run Achilterm after installation:
 
@@ -66,9 +79,9 @@ use an SSH tunnel or an HTTPS reverse proxy with access control.
 Documentation and Caveats
 -------------------------
 
--  Achilterm supports Python 3.2 and above
+-  Achilterm supports Python 3.11 and above
 
--  Achilterm require WebOb >= 1.0
+-  Achilterm requires WebOb 1.8.9 or later
 
 -  If run as root achilterm will run ``/bin/login``, otherwise it will run
    ``ssh localhost``. To use an other command use the ``-c`` option.
@@ -89,7 +102,7 @@ Achiltermlite
 
 Achiltermlite is a stripped-down client-side version of Achilterm.
 
-![Achiltermlite](https://gitlab.com/paulschreiber/achilterm/raw/master/img/achiltermlite.png)
+![Achiltermlite](https://raw.githubusercontent.com/paulschreiber/achilterm/master/img/achiltermlite.png)
 
 Commandline usage
 -----------------
@@ -135,6 +148,20 @@ Configuration example
 
 Changelog
 ---------
+
+### 0.31 (November 2026)
+
+-  Publish as ``achilterm-ng``
+
+-  Fix installation with pip, which failed when WebOb wasn't already present
+
+-  Require Python 3.11 or later and WebOb 1.8.9 or later
+
+-  Replace ``setup.py`` with ``pyproject.toml``
+
+-  Link to the source code from the terminal page
+
+-  Move the project to GitHub
 
 ### 0.30 (November 2026)
 

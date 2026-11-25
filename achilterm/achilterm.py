@@ -5,6 +5,9 @@
 Copyright (C) 2013-2016 Florent Gallaire <fgallaire@gmail.com>
 Copyright (C) 2006 Antony Lesuisse (email: al AT udev.org)
 
+Modified in November 2026 by Paul Schreiber and published as achilterm-ng:
+https://github.com/paulschreiber/achilterm
+
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as
 published by the Free Software Foundation, either version 3 of the
@@ -19,7 +22,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-__version__ = '0.30'
+__version__ = '0.31'
 
 import array,fcntl,glob,html,mimetypes,optparse,os,pty,random,re,signal,select,sys,threading,time,termios,struct,pwd
 
