@@ -25,7 +25,8 @@ import array,fcntl,glob,html,mimetypes,optparse,os,pty,random,re,signal,select,s
 
 import webob
 from socket import gethostname
-from wsgiref.simple_server import make_server, WSGIRequestHandler
+from socketserver import ThreadingMixIn
+from wsgiref.simple_server import make_server, WSGIRequestHandler, WSGIServer
 import gzip
 
 try:
@@ -371,15 +372,16 @@ class Terminal:
 			r+="|%s|\n"%d[self.width*i:self.width*(i+1)]
 		return r
 
+class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
+	daemon_threads = True
+
 class SynchronizedMethod:
 	def __init__(self,lock,orig):
 		self.lock=lock
 		self.orig=orig
 	def __call__(self,*l):
-		self.lock.acquire()
-		r=self.orig(*l)
-		self.lock.release()
-		return r
+		with self.lock:
+			return self.orig(*l)
 
 class Multiplex:
 	def __init__(self,cmd=None):
@@ -438,12 +440,12 @@ class Multiplex:
 	def run(self):
 		return self.alive
 	def fds(self):
-		return self.proc.keys()
+		return list(self.proc)
 	def proc_kill(self,fd):
 		if fd in self.proc:
 			self.proc[fd]['time']=0
 		t=time.time()
-		for i in self.proc.keys():
+		for i in list(self.proc):
 			t0=self.proc[i]['time']
 			if (t-t0)>120:
 				try:
@@ -469,18 +471,22 @@ class Multiplex:
 			self.proc_kill(fd)
 	def dump(self,fd,color=1):
 		try:
+			self.proc[fd]['time']=time.time()
 			return self.proc[fd]['term'].dumphtml(color)
 		except KeyError:
 			return False
 	def loop(self):
 		while self.run():
 			fds=self.fds()
-			i,o,e=select.select(fds, [], [], 1.0)
+			try:
+				i,o,e=select.select(fds, [], [], 1.0)
+			except (OSError, ValueError):
+				continue
 			for fd in i:
 				self.proc_read(fd)
 			if len(i):
 				time.sleep(0.002)
-		for i in self.proc.keys():
+		for i in list(self.proc):
 			try:
 				os.close(i)
 				os.kill(self.proc[i]['pid'],signal.SIGTERM)
@@ -596,7 +602,7 @@ def main():
 	else:
 		at=AchilTerm(o.cmd,lite=o.lite,width=o.width,height=o.height)
 	try:
-		make_server('localhost', int(o.port), at, handler_class=handler_class).serve_forever()
+		make_server('localhost', int(o.port), at, handler_class=handler_class, server_class=ThreadingWSGIServer).serve_forever()
 	except KeyboardInterrupt:
 		sys.excepthook(*sys.exc_info())
 	at.multi.die()
