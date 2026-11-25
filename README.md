@@ -159,6 +159,8 @@ Changelog
 
 -  Replace ``setup.py`` with ``pyproject.toml``
 
+-  Fix an error serving the terminal's JavaScript on Python 3.11
+
 -  Link to the source code from the terminal page
 
 -  Move the project to GitHub

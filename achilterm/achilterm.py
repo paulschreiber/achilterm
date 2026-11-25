@@ -494,6 +494,8 @@ class AchilTerm:
 		self.files['index']=open(index_file).read() % {'width': width, 'height': height}
 		self.mime = mimetypes.types_map.copy()
 		self.mime['.html']= 'text/html; charset=UTF-8'
+		# Older Pythons map .js to a type that WebOb won't write text to.
+		self.mime['.js']= 'text/javascript; charset=UTF-8'
 		self.multi = Multiplex(cmd)
 		self.session = {}
 	def __call__(self, environ, start_response):
