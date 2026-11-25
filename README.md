@@ -66,7 +66,7 @@ use an SSH tunnel or an HTTPS reverse proxy with access control.
 Documentation and Caveats
 -------------------------
 
--  Achilterm support Python 2.5 and above and Python 3.2 and above
+-  Achilterm supports Python 3.2 and above
 
 -  Achilterm require WebOb >= 1.0
 
