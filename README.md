@@ -133,6 +133,26 @@ Configuration example
            ProxyPassReverse /achilterm/ http://localhost:8022/
         </VirtualHost>
 
+Changelog
+---------
+
+### 0.30 (November 2026)
+
+-  Serve requests on threads, so an idle connection no longer blocks others
+
+-  Fix a crash and a held lock when a session ends, which made other
+   requests hang
+
+-  Don't close an idle session while the browser is still polling it
+
+-  Keep running if a session closes while Achilterm is waiting for output
+
+-  Use ``html.escape()``, as ``cgi.escape()`` was removed from Python
+
+-  Drop Python 2 support; Python 3.2 or later is required
+
+-  Add a systemd service unit
+
 Old versions
 ------------
 
