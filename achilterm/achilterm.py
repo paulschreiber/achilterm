@@ -19,7 +19,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-__version__ = '0.21'
+__version__ = '0.30'
 
 import array,fcntl,glob,html,mimetypes,optparse,os,pty,random,re,signal,select,sys,threading,time,termios,struct,pwd
 
