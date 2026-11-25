@@ -41,6 +41,28 @@ To run Achilterm from the source without installation:
 
 Then point your browser to this URL: ``http://localhost:8022/``
 
+Run with systemd
+----------------
+
+``achilterm.service`` runs Achilterm as an unprivileged ``achilterm`` user.
+Users log in over SSH to ``localhost``, so an SSH server with password
+authentication must be running.
+
+Create the user, install the unit and start it:
+
+    $ sudo useradd --system --user-group --create-home --shell /usr/sbin/nologin achilterm
+    $ sudo cp achilterm.service /etc/systemd/system/
+    $ sudo systemctl daemon-reload
+    $ sudo systemctl enable --now achilterm
+
+The unit expects ``/usr/local/bin/achilterm``. If yours is elsewhere, change
+``ExecStart``. To see errors:
+
+    $ sudo journalctl -u achilterm
+
+Achilterm listens on ``localhost`` and serves plain HTTP. For remote access,
+use an SSH tunnel or an HTTPS reverse proxy with access control.
+
 Documentation and Caveats
 -------------------------
 

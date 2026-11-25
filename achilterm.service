@@ -1,0 +1,16 @@
+[Unit]
+Description=Achilterm web terminal
+Documentation=man:achilterm(1)
+After=network.target ssh.service sshd.service
+
+[Service]
+User=achilterm
+Group=achilterm
+Environment=PYTHONUNBUFFERED=1
+# Change this path if achilterm is installed elsewhere.
+ExecStart=/usr/local/bin/achilterm --port=8022
+Restart=on-failure
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
