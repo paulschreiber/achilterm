@@ -44,7 +44,7 @@ Then point your browser to this URL: ``http://localhost:8022/``
 Documentation and Caveats
 -------------------------
 
--  Achilterm support Python 2.5 and above and Python 3.2 and above
+-  Achilterm supports Python 3.2 and above
 
 -  Achilterm require WebOb >= 1.0
 
