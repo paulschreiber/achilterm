@@ -3,7 +3,7 @@ Achilterm
 
 **Achilterm** is a lightweight **UTF-8** web based terminal.
 
-![Achilterm](https://gitlab.com/fgallaire/achilterm/raw/master/img/achilterm.png)
+![Achilterm](https://gitlab.com/paulschreiber/achilterm/raw/master/img/achilterm.png)
 
 Achilterm is written in Python (and some AJAX javascript for client
 side).
@@ -21,13 +21,13 @@ Website: <https://f.gallai.re/achilterm>
 Download and Install
 --------------------
 
-To install the last stable version from PyPI:
+To install the latest release from GitLab:
 
-    $ sudo pip install achilterm
+    $ sudo pip install git+https://gitlab.com/paulschreiber/achilterm.git@v0.30
 
 To install the development version from GitLab:
 
-    $ git clone https://gitlab.com/fgallaire/achilterm
+    $ git clone https://gitlab.com/paulschreiber/achilterm.git
     $ cd achilterm
     $ sudo python setup.py install
 
@@ -89,7 +89,7 @@ Achiltermlite
 
 Achiltermlite is a stripped-down client-side version of Achilterm.
 
-![Achiltermlite](https://gitlab.com/fgallaire/achilterm/raw/master/img/achiltermlite.png)
+![Achiltermlite](https://gitlab.com/paulschreiber/achilterm/raw/master/img/achiltermlite.png)
 
 Commandline usage
 -----------------
