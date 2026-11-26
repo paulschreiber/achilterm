@@ -30,6 +30,7 @@ import glob
 import gzip
 import html
 import itertools
+import logging
 import mimetypes
 import optparse
 import os
@@ -126,6 +127,13 @@ def refuse(status, message, **headers):
     response = webob.Response(text=message, status=status, content_type="text/plain")
     response.headers.update(headers)
     return response
+
+
+logger = logging.getLogger(__name__)
+
+
+def clamp(value, low, high):
+    return max(low, min(value, high))
 
 
 class Terminal:
@@ -225,7 +233,7 @@ class Terminal:
         self.zero(y1, 0, y1, self.width - 1)
 
     def scroll_right(self, y, x):
-        self.poke(y, x + 1, self.peek(y, x, y, self.width))
+        self.poke(y, x + 1, self.peek(y, x, y, self.width - 1))
         self.zero(y, x, y, x)
 
     def cursor_down(self):
@@ -333,13 +341,13 @@ class Terminal:
         self.cl = 0
 
     def csi_G(self, l):
-        self.cx = min(self.width, l[0]) - 1
+        self.cx = clamp(l[0], 1, self.width) - 1
 
     def csi_H(self, l):
         if len(l) < 2:
             l = [1, 1]
-        self.cx = min(self.width, l[1]) - 1
-        self.cy = min(self.height, l[0]) - 1
+        self.cx = clamp(l[1], 1, self.width) - 1
+        self.cy = clamp(l[0], 1, self.height) - 1
         self.cl = 0
 
     def csi_J(self, l):
@@ -375,7 +383,9 @@ class Terminal:
         self.poke(cy, cx, end[l[0] :])
 
     def csi_X(self, l):
-        self.zero(self.cy, self.cx, self.cy, self.cx + l[0])
+        # erase this many characters, at least one, without leaving the row
+        last = min(self.cx + max(l[0], 1), self.width) - 1
+        self.zero(self.cy, self.cx, self.cy, last)
 
     def csi_a(self, l):
         self.csi_C(l)
@@ -385,7 +395,7 @@ class Terminal:
         pass
 
     def csi_d(self, l):
-        self.cy = min(self.height, l[0]) - 1
+        self.cy = clamp(l[0], 1, self.height) - 1
 
     def csi_e(self, l):
         self.csi_B(l)
@@ -423,10 +433,9 @@ class Terminal:
     # 		print 'sgr: %r %x'%(l,self.sgr)
     def csi_r(self, l):
         if len(l) < 2:
-            l = [0, self.height]
-        self.st = min(self.height - 1, l[0] - 1)
-        self.sb = min(self.height - 1, l[1] - 1)
-        self.sb = max(self.st, self.sb)
+            l = [1, self.height]  # the whole screen
+        self.st = clamp(l[0], 1, self.height) - 1
+        self.sb = clamp(l[1], self.st + 1, self.height) - 1
 
     def csi_s(self, l):
         self.esc_save(0)
@@ -528,8 +537,8 @@ class Multiplex:
         # that is never reused.
         self.proc = {}
         self.key_counter = itertools.count(1)
-        # keys of the sessions closed because no browser was showing them
-        self.expired = set()
+        # why a session was closed, by key, for those whose page should be told
+        self.closed = {}
         self.lock = threading.RLock()
         self.thread = threading.Thread(target=self.loop)
         self.alive = 1
@@ -623,7 +632,9 @@ class Multiplex:
         for key, proc in list(self.proc.items()):
             if proc["seen"] < cutoff:
                 self.proc_close(key)
-                self.expired.add(key)
+                self.closed[key] = (
+                    "This terminal was closed because the page was disconnected."
+                )
 
     def proc_read(self, key):
         try:
@@ -635,6 +646,11 @@ class Multiplex:
                 self.proc_write(key, reply)
         except (KeyError, OSError):
             self.proc_close(key)
+        except Exception:
+            # A fault in handling one terminal's output mustn't stop the others.
+            logger.exception("Closing a terminal whose output couldn't be handled")
+            self.proc_close(key)
+            self.closed[key] = "This terminal was closed because of a server error."
 
     def proc_write(self, key, s):
         if key in self.proc:
@@ -768,14 +784,13 @@ class AchilTerm:
             time.sleep(0.002)
             # A page that lost a response asks for the whole screen again.
             dump = self.multi.dump(term, c, bool(req.POST.get("f")))
-            if dump is False and term in self.multi.expired:
+            if dump is False and term in self.multi.closed:
                 # Don't quietly start another terminal: the person may go on
                 # typing as if it were the one that was closed.
-                return refuse(
-                    410,
-                    "This terminal was closed because the page was disconnected. "
-                    "Reload the page to start a new one.",
-                )(environ, start_response)
+                reason = self.multi.closed[term]
+                return refuse(410, f"{reason} Reload the page to start a new one.")(
+                    environ, start_response
+                )
             res.content_type = "text/xml"
             res.headers["X-Achilterm-Instance"] = self.instance
             if isinstance(dump, str):

@@ -2,7 +2,9 @@
 
 import gzip
 import hashlib
+import logging
 import os
+import random
 import re
 import socket
 import subprocess
@@ -16,7 +18,7 @@ from xml.etree import ElementTree
 
 import webob
 
-from achilterm.achilterm import AchilTerm
+from achilterm.achilterm import AchilTerm, Terminal
 
 COMMAND = os.path.join(os.path.dirname(sys.executable), "achilterm")
 
@@ -150,6 +152,36 @@ def check_access():
         assert result.returncode == 2, (option, result)
 
 
+def check_escape_sequences():
+    """No sequence may move the cursor or scroll region off the screen."""
+    numbers = ("", "0", "1", "3", "25", "26", "80", "81", "999")
+    parts = ["a", "bbbbbbbbbbbb", "\n", "\r", "\t", "\x08", "\u20ac"]
+    parts += ["\x1b7", "\x1b8", "\x1bM", "\x1bc"]
+    finals = "@ABCDEFGHJKLMPXacdefhlmrsu`"
+    choose = random.Random(1).choice
+    # sequences that have caused trouble, then random ones
+    cases = [["\x1b[0;0r\x1b[0d\n"], ["\x1b[r"] + ["a\n"] * 40, ["\x1b[0;0H\x1b[K"]]
+    cases += [["\x1b[5;80H\x1b[9@"], ["\x1b[25;80H\x1b[999X"]]
+    for trial in range(3000):
+        case = []
+        for step in range(20):
+            if choose((True, False)):
+                case.append(choose(parts))
+            else:
+                values = (choose(numbers) for n in range(choose((0, 1, 2, 3))))
+                case.append(f"\x1b[{';'.join(values)}{choose(finals)}")
+        cases.append(case)
+    for case in cases:
+        for width, height in ((3, 3), (80, 25)):
+            term = Terminal(width, height)
+            for text in case:
+                term.write(text.encode())
+                ElementTree.fromstring(term.dumphtml().encode())
+                assert len(term.scr) == width * height, case
+                assert 0 <= term.cx < width and 0 <= term.cy < height, case
+                assert 0 <= term.st <= term.sb < height, case
+
+
 def check_expiry():
     # Runs the application here, to use a timeout shorter than the command allows.
     app = AchilTerm("while :; do echo busy; sleep 1; done", timeout=2)
@@ -182,6 +214,31 @@ def check_expiry():
             assert response.status_code == 410, response.status
             assert "Reload" in response.text
         assert len(app.multi.proc) == 1, app.multi.proc
+
+        # If one terminal's output can't be handled, only it is closed.
+        def fail(data):
+            raise RuntimeError("deliberate failure for this test")
+
+        # The failure is expected, so collect its log entry instead of showing it.
+        logged = []
+        log = logging.getLogger("achilterm.achilterm")
+        handler = logging.Handler()
+        handler.emit = logged.append
+        log.addHandler(handler)
+        log.propagate = False
+        assert post("broken").status_code == 200
+        broken = app.session[session_id("broken")]
+        app.multi.proc[broken]["term"].write = fail
+        for attempt in range(50):
+            time.sleep(0.2)
+            response = post("broken")
+            if response.status_code != 200:
+                break
+        assert response.status_code == 410, response.status
+        assert "server error" in response.text, response.text
+        assert post("shown").status_code == 200
+        assert app.multi.thread.is_alive()
+        assert [record.exc_info[0] for record in logged] == [RuntimeError], logged
     finally:
         app.multi.die()
         app.multi.thread.join(10)
@@ -297,6 +354,7 @@ def main():
 
     assert "Traceback" not in errors, errors
     check_access()
+    check_escape_sequences()
     check_expiry()
     print("smoke test passed")
 
