@@ -498,7 +498,8 @@ def check_stop(stop, ignored_by_command="HUP"):
 
 
 def check_end_of_output():
-    """A terminal closes when reading it returns nothing, as on macOS and BSD."""
+    """A terminal closes when a read returns nothing, as on macOS and BSD, but not
+    when there's nothing to read yet."""
     with running_app("sleep 30") as app:
         session = new_app_session(app)
         # Hold the lock so that only these reads happen.
