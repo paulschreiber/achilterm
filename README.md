@@ -51,6 +51,10 @@ To lint the code and check its formatting (needs pip 25.1 or later):
     $ .venv/bin/ruff check .
     $ .venv/bin/ruff format --check .
 
+To run the same checks, plus file cleanup, automatically before each commit:
+
+    $ .venv/bin/pre-commit install
+
 To run Achilterm after installation:
 
     $ achilterm

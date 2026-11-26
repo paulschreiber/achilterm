@@ -32,7 +32,7 @@ classifiers = [
 dependencies = ["webob>=1.8.11"]
 
 [dependency-groups]
-dev = ["ruff==0.17.6"]
+dev = ["pre-commit==4.7.0", "ruff==0.17.6"]
 
 [project.urls]
 Homepage = "https://paulschreiber.github.io/achilterm/"
