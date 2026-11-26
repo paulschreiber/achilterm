@@ -1004,7 +1004,6 @@ def main():
             allowed_host(host)
         except ValueError as error:
             parser.error(f"--allow-host: {error}")
-    print(f"Achilterm at http://localhost:{o.port}/")
     if o.log:
         handler_class = WSGIRequestHandler
     else:
@@ -1036,6 +1035,7 @@ def main():
             handler_class=handler_class,
             server_class=ThreadingWSGIServer,
         ) as server:
+            print(f"Achilterm at http://localhost:{o.port}/")
 
             def stop():
                 signal.sigwait(stop_signals)

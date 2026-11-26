@@ -80,6 +80,14 @@ To run Achilterm from the source without installation:
 
 Then point your browser to this URL: ``http://localhost:8022/``
 
+Achilterm runs in the foreground. To keep it running, use systemd (below) or
+your system's service manager, or, until the next restart, ``nohup``:
+
+    $ nohup achilterm &
+
+Run it as an unprivileged user rather than root, unless you want it to use
+``/bin/login``.
+
 Run with systemd
 ----------------
 
