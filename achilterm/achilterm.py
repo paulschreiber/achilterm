@@ -1038,8 +1038,9 @@ def main():
             # Written straight to standard output, so that it appears at once, even
             # in a file. Being unable to write it mustn't stop the server.
             address = f"Achilterm at http://localhost:{server.server_port}/\n"
-            with contextlib.suppress(OSError):
-                os.write(1, address.encode())
+            if sys.stdout:  # otherwise descriptor 1 may be something else by now
+                with contextlib.suppress(OSError):
+                    os.write(1, address.encode())
 
             def stop():
                 signal.sigwait(stop_signals)

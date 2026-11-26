@@ -106,7 +106,18 @@ def buffered_environment():
 def announced_address(server):
     """The line a server writes as soon as it's listening."""
     assert select.select([server.stdout], [], [], 5)[0], "no address printed"
-    return server.stdout.readline().decode()
+    line = server.stdout.readline().decode()
+    assert line, "the server ended without printing its address"
+    return line
+
+
+def terminate(server):
+    """Stop a server and return its output, never leaving it running."""
+    server.terminate()
+    try:
+        return server.communicate(timeout=10)
+    finally:
+        server.kill()
 
 
 def start_server(*options):
@@ -705,8 +716,7 @@ def check_announcement():
         assert port, "no port"
         assert "Achilterm" in fetch(f"http://127.0.0.1:{port}/")
     finally:
-        server.terminate()
-        server.communicate(timeout=10)
+        terminate(server)
 
     # Nothing reads its output.
     reader, writer = os.pipe()
@@ -721,8 +731,7 @@ def check_announcement():
         assert wait_until(lambda: not connection_refused(port)), "not listening"
         assert "Achilterm" in fetch(url)
     finally:
-        server.terminate()
-        errors = server.communicate(timeout=10)[1].decode()
+        errors = terminate(server)[1].decode()
     assert server.returncode == 0 and not errors, (server.returncode, errors)
 
 
