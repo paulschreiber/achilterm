@@ -233,8 +233,11 @@ Changelog
 -  Fix terminals stopping when the server has more than about a thousand files
    and connections open
 
--  Use random 128-bit session IDs, and refuse requests from other websites or
-   for unknown host names (see ``--allow-host``)
+-  Have the server issue random 128-bit session IDs, and refuse requests from
+   other websites or for unknown host names (see ``--allow-host``)
+
+-  When a session ends, for example after ``exit``, say so instead of starting
+   a new login; reload the page to start another
 
 -  Close terminals whose page is no longer open (see ``--timeout``)
 
