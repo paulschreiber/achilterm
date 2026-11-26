@@ -145,8 +145,9 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		'F6':'\x1b[17~', 'F7':'\x1b[18~', 'F8':'\x1b[19~', 'F9':'\x1b[20~', 'F10':'\x1b[21~',
 		'F11':'\x1b[23~', 'F12':'\x1b[24~'
 	};
-	// With Alt, these move or delete by word in shells.
-	var alt_keys={'ArrowLeft':'\x1b[1;3D', 'ArrowRight':'\x1b[1;3C', 'Backspace':'\x1b\x7f'};
+	// With Alt, these move or delete by word, as Alt-B, Alt-F and so on do. Shells
+	// such as bash and zsh understand these without any setting up.
+	var alt_keys={'ArrowLeft':'\x1bb', 'ArrowRight':'\x1bf', 'Backspace':'\x1b\x7f'};
 	// With Alt, the other keys that move or edit do what they do without it, so
 	// that the browser doesn't act on them, such as by going to its home page.
 	var editing_keys=['ArrowUp','ArrowDown','Home','End','PageUp','PageDown','Insert','Delete'];

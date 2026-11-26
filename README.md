@@ -230,7 +230,7 @@ Changelog
    browsers, and remove support for Internet Explorer
 
 -  Keep Alt with the arrows or Home from leaving the page; Alt with Left, Right
-   or Backspace moves or deletes by word in shells
+   or Backspace moves or deletes by word in bash and zsh
 
 -  Fix large input, such as a long paste, being cut off
 
