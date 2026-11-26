@@ -24,6 +24,9 @@ pre.stat .off {
 	cursor: pointer;
 }
 pre.term {
+	/* Show cells in order, even for right-to-left text. */
+	direction: ltr;
+	unicode-bidi: bidi-override;
 	margin: 0px;
 	padding: 4px;
 	display: block;

@@ -57,18 +57,31 @@ except metadata.PackageNotFoundError:
     __version__ = "unknown"
 
 
-# Colors are held as 0xBBFF00: a byte each for background and foreground. A
-# screen cell holds those two bytes above a character in its low 24 bits, which
-# is enough for any Unicode character.
+# A screen cell holds a character in its low 24 bits, which is enough for any
+# Unicode character, below its colors: 0xBBFF, a byte each for background and
+# foreground.
 CHAR_BITS = 24
-DEFAULT_SGR = 0x000700
-BLANK = DEFAULT_SGR >> 8 << CHAR_BITS
+DEFAULT_SGR = 0x0007
+BLANK = DEFAULT_SGR << CHAR_BITS | ord(" ")
 
-
-def is_printable(c):
-    # Control characters aren't shown, and some would make the XML sent to the
-    # browser invalid.
-    return c >= " " and not "\x7f" <= c <= "\x9f" and c not in "\ufffe\uffff"
+# Characters that aren't shown: controls, some of which would make the XML sent
+# to the browser invalid, and those that would reorder or break screen lines.
+UNPRINTABLE = frozenset(
+    map(
+        chr,
+        [
+            *range(0x20),
+            *range(0x7F, 0xA0),
+            0x061C,
+            0x200E,
+            0x200F,
+            *range(0x2028, 0x202F),
+            *range(0x2066, 0x206A),
+            0xFFFE,
+            0xFFFF,
+        ],
+    )
+)
 
 
 class Terminal:
@@ -83,17 +96,13 @@ class Terminal:
 
     def init(self):
         self.esc_seq = {
-            "\x00": None,
             "\x05": self.esc_da,
-            "\x07": None,
             "\x08": self.esc_0x08,
             "\x09": self.esc_0x09,
             "\x0a": self.esc_0x0a,
             "\x0b": self.esc_0x0a,
             "\x0c": self.esc_0x0a,
             "\x0d": self.esc_0x0d,
-            "\x0e": None,
-            "\x0f": None,
             "\x1b#8": None,
             "\x1b=": None,
             "\x1b>": None,
@@ -140,7 +149,7 @@ class Terminal:
                 self.csi_seq[i] = (getattr(self, "csi_" + i), [1])
 
     def reset(self, s=""):
-        self.scr = array.array("q", [BLANK] * (self.width * self.height))
+        self.scr = array.array("q", [BLANK]) * (self.width * self.height)
         self.st = 0
         self.sb = self.height - 1
         self.cx_bak = self.cx = 0
@@ -160,7 +169,7 @@ class Terminal:
 
     def zero(self, y1, x1, y2, x2):
         w = self.width * (y2 - y1) + x2 - x1 + 1
-        z = array.array("q", [BLANK] * w)
+        z = array.array("q", [BLANK]) * w
         self.scr[self.width * y1 + x1 : self.width * y2 + x2 + 1] = z
 
     def scroll_up(self, y1, y2):
@@ -196,8 +205,7 @@ class Terminal:
         if self.cl:
             self.cursor_down()
             self.cx = 0
-        cell = self.sgr >> 8 << CHAR_BITS | ord(c)
-        self.scr[(self.cy * self.width) + self.cx] = cell
+        self.scr[(self.cy * self.width) + self.cx] = self.sgr << CHAR_BITS | ord(c)
         self.cursor_right()
 
     def esc_0x08(self, s):
@@ -356,15 +364,15 @@ class Terminal:
             if i == 0 or i == 39 or i == 49 or i == 27:
                 self.sgr = DEFAULT_SGR
             elif i == 1:
-                self.sgr = self.sgr | 0x000800
+                self.sgr = self.sgr | 0x0008
             elif i == 7:
-                self.sgr = 0x070000
+                self.sgr = 0x0700
             elif i >= 30 and i <= 37:
                 c = i - 30
-                self.sgr = (self.sgr & 0xFF08FF) | (c << 8)
+                self.sgr = (self.sgr & 0xFF08) | c
             elif i >= 40 and i <= 47:
                 c = i - 40
-                self.sgr = (self.sgr & 0x00FFFF) | (c << 16)
+                self.sgr = (self.sgr & 0x00FF) | (c << 8)
 
     # 			else:
     # 				print "CSI sgr ignore",l,i
@@ -407,7 +415,7 @@ class Terminal:
                 self.escape()
             elif i == "\x1b":
                 self.buf += i
-            elif is_printable(i):
+            elif i not in UNPRINTABLE:
                 self.echo(i)
 
     def read(self):
@@ -434,10 +442,7 @@ class Terminal:
                     r += f'<span class="f{span_fg:d} b{span_bg:d}">{html.escape(span)}</span>'
                 span = ""
                 span_bg, span_fg = bg, fg
-            if c == 0:
-                span += " "
-            else:
-                span += chr(c)
+            span += chr(c)
             if i % w == w - 1:
                 span += "\n"
         r = f'<?xml version="1.0" encoding="UTF-8"?><pre class="term">{r}</pre>'

@@ -1,7 +1,6 @@
 """Start the installed achilterm command and exercise it over HTTP."""
 
 import gzip
-import html
 import os
 import re
 import socket
@@ -29,6 +28,10 @@ def fetch(url, data=None):
         if response.headers.get("Content-Encoding") == "gzip":
             body = gzip.decompress(body)
         return body.decode()
+
+
+def screen_text(response):
+    return "".join(ElementTree.fromstring(response.encode()).itertext())
 
 
 def main():
@@ -61,7 +64,7 @@ def main():
             # A response only holds the screen when it has changed, so check
             # every one, including the response to the keys.
             screen = terminal(session, keys if attempt == 0 else "")
-            if re.search(pattern, html.unescape(re.sub(r"<[^>]+>", "", screen))):
+            if re.search(pattern, screen_text(screen)):
                 return screen
             time.sleep(0.1)
         raise AssertionError(f"{pattern!r} never appeared: {screen}")
@@ -125,14 +128,16 @@ def main():
             # colors, and control characters must not break the response.
             terminal("fifth")
             text = "\u00e9\u20ac\u03bb\u0416\u2500\u4e2d\U0001f600"
-            octal = "".join(f"\\{byte:03o}" for byte in text.encode())
-            controls = "\\001\\002\\016\\177\\302\\205\\357\\277\\276"
+            # C0 and C1 controls, DEL, a noncharacter, a direction override and
+            # a line separator.
+            controls = "\x01\x02\x0e\x7f\x85\ufffe\u202e\u2028"
+            octal = "".join(f"\\{byte:03o}" for byte in (controls + text).encode())
             screen = expect(
                 "fifth",
-                f"printf '<{controls}{octal}>\\n'; echo end$((7+7))\r",
+                f"printf '<{octal}>\\n'; echo end$((7+7))\r",
                 "end14",
             )
-            assert f"<{text}>" in html.unescape(re.sub(r"<[^>]+>", "", screen)), screen
+            assert f"<{text}>" in screen_text(screen), screen
             colors = set(re.findall(r'class="f(\d+) b(\d+)"', screen))
             assert colors <= {("7", "0"), ("7", "1")}, colors
     finally:
