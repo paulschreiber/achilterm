@@ -119,10 +119,6 @@ Documentation and Caveats
 
    Using ssl will also speed up achilterm (probably because of keepalive).
 
--  Using GET HTTP request seems to speed up achilterm, just click on GET
-   in the interface, but be warned that your keystrokes might be loggued
-   (by apache or any proxy). I usually enable it after the login.
-
 Achiltermlite
 -------------
 
@@ -195,6 +191,9 @@ Changelog
 -  Fix the Paste button, which only worked in old browsers
 
 -  Fix large input, such as a long paste, being cut off
+
+-  Remove the GET option, which could record keystrokes in server logs;
+   keystrokes are now accepted only in POST requests
 
 -  Use ``html.escape()``, as ``cgi.escape()`` was removed from Python
 
