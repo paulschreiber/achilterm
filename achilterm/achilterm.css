@@ -35,6 +35,8 @@ pre.term {
 	background-color: black;
 	border-top: 1px solid white;
 	color: #eee;
+	/* Leave room for the buttons above even a very narrow screen. */
+	min-width: 20ch;
 }
 pre.term span.f0  { color: #000; }
 pre.term span.f1  { color: #b00; }
@@ -69,9 +71,8 @@ p.source {
 	margin: 4px;
 	font: 11px sans-serif;
 }
-/* Once there is a screen, long messages wrap to its width, though no narrower
-   than the buttons need. */
+/* Once there is a screen, long messages wrap to its width. */
 #term.shown pre.stat {
 	width: 0;
-	min-width: max(100% - 8px, 20ch);
+	min-width: calc(100% - 8px);
 }
