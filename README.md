@@ -226,7 +226,7 @@ Changelog
 
 -  Fix large input, such as a long paste, being cut off
 
--  Fix escape sequences that could stop every terminal updating, move the
+-  Fix escape sequences that could stop or stall every terminal, move the
    cursor off the screen or change the screen's size, including the common
    "reset scroll region"
 

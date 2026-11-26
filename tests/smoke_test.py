@@ -2,7 +2,6 @@
 
 import gzip
 import hashlib
-import logging
 import os
 import random
 import re
@@ -10,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -154,55 +154,87 @@ def check_access():
 
 def check_escape_sequences():
     """No sequence may move the cursor or scroll region off the screen."""
+    # A zero or missing row means the first or last, and a region whose top
+    # isn't above its bottom is ignored.
+    for sequence, region in (
+        ("[r", (0, 24)),
+        ("[0;0r", (0, 24)),
+        ("[1;0r", (0, 24)),
+        ("[3r", (2, 24)),
+        ("[5;20r", (4, 19)),
+        ("[20;5r", (1, 9)),
+        ("[99;99r", (1, 9)),
+    ):
+        term = Terminal(80, 25)
+        term.write(f"\x1b[2;10r\x1b{sequence}".encode())
+        assert (term.st, term.sb) == region, (sequence, term.st, term.sb)
+
+    # Lines and characters are inserted and deleted within the region and row.
+    for sequence, rows in (
+        ("[2;1H\x1b[L", "abcd ____ efgh ijkl"),
+        ("[2;1H\x1b[2L", "abcd ____ ____ efgh"),
+        ("[2;1H\x1b[999L", "abcd ____ ____ ____"),
+        ("[2;1H\x1b[2M", "abcd mnop ____ ____"),
+        ("[2;1H\x1b[999M", "abcd ____ ____ ____"),
+        ("[2;3H\x1b[@", "abcd ef_g ijkl mnop"),
+        ("[2;3H\x1b[999@", "abcd ef__ ijkl mnop"),
+        ("[2;2H\x1b[X", "abcd e_gh ijkl mnop"),
+        ("[2;2H\x1b[999X", "abcd e___ ijkl mnop"),
+    ):
+        term = Terminal(4, 4)
+        term.write(f"abcdefghijklmnop\x1b{sequence}".encode())
+        text = "".join(chr(cell & 0xFFFFFF) for cell in term.scr).replace(" ", "_")
+        shown = " ".join(text[start : start + 4] for start in range(0, 16, 4))
+        assert shown == rows, (sequence, shown)
+
     numbers = ("", "0", "1", "3", "25", "26", "80", "81", "999")
     parts = ["a", "bbbbbbbbbbbb", "\n", "\r", "\t", "\x08", "\u20ac"]
     parts += ["\x1b7", "\x1b8", "\x1bM", "\x1bc"]
     finals = "@ABCDEFGHJKLMPXacdefhlmrsu`"
-    choose = random.Random(1).choice
+    rng = random.Random(1)
     # sequences that have caused trouble, then random ones
     cases = [["\x1b[0;0r\x1b[0d\n"], ["\x1b[r"] + ["a\n"] * 40, ["\x1b[0;0H\x1b[K"]]
     cases += [["\x1b[5;80H\x1b[9@"], ["\x1b[25;80H\x1b[999X"]]
     for trial in range(3000):
         case = []
         for step in range(20):
-            if choose((True, False)):
-                case.append(choose(parts))
+            if rng.choice((True, False)):
+                case.append(rng.choice(parts))
             else:
-                values = (choose(numbers) for n in range(choose((0, 1, 2, 3))))
-                case.append(f"\x1b[{';'.join(values)}{choose(finals)}")
+                values = ";".join(rng.choices(numbers, k=rng.randrange(4)))
+                case.append(f"\x1b[{values}{rng.choice(finals)}")
         cases.append(case)
     for case in cases:
         for width, height in ((3, 3), (80, 25)):
             term = Terminal(width, height)
             for text in case:
                 term.write(text.encode())
-                ElementTree.fromstring(term.dumphtml().encode())
                 assert len(term.scr) == width * height, case
                 assert 0 <= term.cx < width and 0 <= term.cy < height, case
                 assert 0 <= term.st <= term.sb < height, case
+            ElementTree.fromstring(term.dumphtml().encode())
+
+
+def post(app, name):
+    """Ask an application running here for a terminal's screen."""
+    request = webob.Request.blank("/u", headers=PAGE_HEADERS, POST=terminal_query(name))
+    return request.get_response(app)
 
 
 def check_expiry():
     # Runs the application here, to use a timeout shorter than the command allows.
     app = AchilTerm("while :; do echo busy; sleep 1; done", timeout=2)
-
-    def post(name):
-        request = webob.Request.blank(
-            "/u", headers=PAGE_HEADERS, POST=terminal_query(name)
-        )
-        return request.get_response(app)
-
     try:
         pids = {}
         for name in ("shown", "left"):
-            assert post(name).status_code == 200
+            assert post(app, name).status_code == 200
             key = app.session[session_id(name)]
             pids[name] = app.multi.proc[key]["pid"]
         # A terminal closes once no page asks for it, even while it has output,
         # and stays open while one does.
         for attempt in range(50):
             time.sleep(0.2)
-            assert post("shown").status_code == 200
+            assert post(app, "shown").status_code == 200
             # Go on past the timeout, so that "shown" has to outlast it.
             if attempt > 12 and not is_running(pids["left"]):
                 break
@@ -210,35 +242,42 @@ def check_expiry():
         assert not is_running(pids["left"]), "an abandoned terminal stayed open"
         # Its page is told, every time, and gets no new terminal.
         for attempt in range(2):
-            response = post("left")
+            response = post(app, "left")
             assert response.status_code == 410, response.status
-            assert "Reload" in response.text
+            assert "disconnected. Reload" in response.text, response.text
         assert len(app.multi.proc) == 1, app.multi.proc
+    finally:
+        app.multi.die()
+        app.multi.thread.join(10)
 
-        # If one terminal's output can't be handled, only it is closed.
-        def fail(data):
-            raise RuntimeError("deliberate failure for this test")
 
-        # The failure is expected, so collect its log entry instead of showing it.
-        logged = []
-        log = logging.getLogger("achilterm.achilterm")
-        handler = logging.Handler()
-        handler.emit = logged.append
-        log.addHandler(handler)
-        log.propagate = False
-        assert post("broken").status_code == 200
-        broken = app.session[session_id("broken")]
-        app.multi.proc[broken]["term"].write = fail
-        for attempt in range(50):
-            time.sleep(0.2)
-            response = post("broken")
-            if response.status_code != 200:
-                break
-        assert response.status_code == 410, response.status
-        assert "server error" in response.text, response.text
-        assert post("shown").status_code == 200
+def check_output_fault():
+    """If one terminal's output can't be handled, only that one is closed."""
+    app = AchilTerm("while :; do echo busy; sleep 1; done")
+
+    def fail(*args):
+        raise RuntimeError("deliberate failure for this test")
+
+    try:
+        assert post(app, "other").status_code == 200
+        # reading the output, then drawing the screen
+        for method in ("write", "dumphtml"):
+            assert post(app, method).status_code == 200
+            key = app.session[session_id(method)]
+            # The error is expected, so collect its log entry instead of showing it.
+            with unittest.TestCase().assertLogs("achilterm.achilterm") as logs:
+                setattr(app.multi.proc[key]["term"], method, fail)
+                for attempt in range(50):
+                    time.sleep(0.2)
+                    response = post(app, method)
+                    if response.status_code != 200:
+                        break
+            assert response.status_code == 410, response.status
+            assert "server error" in response.text, response.text
+            errors = [record.exc_info[0] for record in logs.records]
+            assert errors == [RuntimeError], errors
+        assert post(app, "other").status_code == 200
         assert app.multi.thread.is_alive()
-        assert [record.exc_info[0] for record in logged] == [RuntimeError], logged
     finally:
         app.multi.die()
         app.multi.thread.join(10)
@@ -356,6 +395,7 @@ def main():
     check_access()
     check_escape_sequences()
     check_expiry()
+    check_output_fault()
     print("smoke test passed")
 
 
