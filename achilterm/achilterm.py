@@ -93,7 +93,7 @@ UNPRINTABLE = frozenset(
 # timeouts than the minimum would close terminals that are still open.
 DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
-# Kill a closed terminal's command if it hasn't ended after this many seconds.
+# Kill what's left of a closed terminal's command after this many seconds.
 KILL_DELAY = 5
 # Names a request may use for this server. Refusing others stops a website from
 # reaching it by pointing its own name at this machine.
@@ -536,7 +536,7 @@ class Multiplex:
         self.proc = {}
         # why a session was closed, by key, when there is a reason to give
         self.close_reasons = {}
-        # when to kill each closed session's process, by process ID, until it ends
+        # when to kill each closed session's process group, until nothing is left
         self.ending = {}
         self.lock = threading.RLock()
         self.thread = threading.Thread(target=self.loop)
@@ -559,8 +559,14 @@ class Multiplex:
         self.thread.start()
 
     def create(self, w=80, h=25):
+        """Start a terminal and return its session ID, or None while stopping."""
+        if not self.alive:
+            return None
         pid, fd = pty.fork()
         if pid == 0:
+            # The command mustn't inherit how the server handles these signals.
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                signal.signal(signum, signal.SIG_DFL)
             # The command mustn't inherit other terminals or connections.
             try:
                 end = max(map(int, os.listdir("/proc/self/fd"))) + 1
@@ -627,7 +633,7 @@ class Multiplex:
             with contextlib.suppress(OSError):
                 os.close(proc["fd"])
             with contextlib.suppress(OSError):
-                os.kill(proc["pid"], signal.SIGTERM)
+                os.killpg(proc["pid"], signal.SIGTERM)
             self.ending[proc["pid"]] = time.monotonic() + KILL_DELAY
 
     def reap(self):
@@ -635,16 +641,21 @@ class Multiplex:
         now = time.monotonic()
         for pid, deadline in list(self.ending.items()):
             try:
-                ended = os.waitpid(pid, os.WNOHANG)[0]
+                collected = os.waitpid(pid, os.WNOHANG)[0] != 0
             except ChildProcessError:
-                ended = True  # something else has collected it
-            if ended:
-                del self.ending[pid]
-            elif now > deadline:
-                # The command leads its own process group. Until it's collected,
-                # that group's number can't belong to anything else.
-                with contextlib.suppress(OSError):
-                    os.killpg(pid, signal.SIGKILL)
+                collected = True  # earlier, or by something else
+            # The command leads a process group, holding what it started. The
+            # group's number isn't used again while anything is left in it.
+            try:
+                os.killpg(pid, signal.SIGKILL if now > deadline else 0)
+            except ProcessLookupError:
+                if collected:
+                    del self.ending[pid]
+                    continue
+            except PermissionError:
+                pass  # what's left runs as another user
+            if now > deadline:
+                self.ending[pid] = now + KILL_DELAY
 
     def expire(self):
         """Close the sessions that no browser is showing any more."""
@@ -807,6 +818,9 @@ class AchilTerm:
                 if not (w > 2 and w < 256 and h > 2 and h < 100):
                     w, h = 80, 25
                 session = self.multi.create(w, h)
+                if session is None:
+                    refused = refuse(503, "The server is stopping.")
+                    return refused(environ, start_response)
             if k:
                 self.multi.proc_write(session, k)
             time.sleep(0.002)
@@ -963,6 +977,8 @@ def main():
         timeout=o.timeout,
         allow_hosts=o.allow_hosts,
     )
+    # Stop as for Ctrl-C when asked to by kill, so that terminals are closed.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit())
     try:
         make_server(
             "localhost",
@@ -973,7 +989,12 @@ def main():
         ).serve_forever()
     except KeyboardInterrupt:
         sys.excepthook(*sys.exc_info())
-    at.multi.die()
+    finally:
+        # Finish closing the terminals even if asked to stop again.
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(signum, signal.SIG_IGN)
+        at.multi.die()
+        at.multi.thread.join()
 
 
 if __name__ == "__main__":

@@ -340,6 +340,11 @@ def app_screen(app, session, keys=""):
     return response.text
 
 
+def is_collected(pid):
+    """Whether a process is gone altogether, not left as a zombie."""
+    return not os.path.exists(f"/proc/{pid}")
+
+
 def wait_until(condition, seconds=5):
     end = time.monotonic() + seconds
     while not condition():
@@ -354,7 +359,9 @@ def check_processes():
     command = """read mode
         [ $mode = exit ] && exit
         [ $mode = stubborn ] && trap '' HUP TERM
-        sleep 60 & echo "child $!"; wait"""
+        if [ $mode = child ]; then (trap '' HUP TERM; exec sleep 60) &
+        else sleep 60 & fi
+        echo "child $!"; wait"""
 
     def start(app, mode):
         """A session, its process and that process's own child."""
@@ -370,31 +377,60 @@ def check_processes():
             app.multi.proc_close(session)
 
     def gone(pid, child):
-        # The command is collected, not left as a zombie. Its child is collected
-        # by whichever process adopts it.
-        return not os.path.exists(f"/proc/{pid}") and not is_running(child)
+        # The command's child is collected by whichever process adopts it.
+        return is_collected(pid) and not is_running(child)
 
     with mock.patch("achilterm.achilterm.KILL_DELAY", 1):
         with running_app(command) as app:
             session = new_app_session(app)
             pid = app.multi.proc[session]["pid"]
             post(app, session, "exit\r")
-            assert wait_until(lambda: not os.path.exists(f"/proc/{pid}")), "exited"
+            assert wait_until(lambda: is_collected(pid)), "exited"
 
             session, pid, child = start(app, "ordinary")
             close(app, session)
             assert wait_until(lambda: gone(pid, child)), "closed"
 
-            session, pid, child = start(app, "stubborn")
-            close(app, session)
-            time.sleep(0.3)
-            assert is_running(pid) and is_running(child), "killed too soon"
-            assert wait_until(lambda: gone(pid, child)), "ignored its signals"
-            assert not app.multi.ending, app.multi.ending
+            # Either the command or only something it started ignores signals.
+            for mode in ("stubborn", "child"):
+                session, pid, child = start(app, mode)
+                close(app, session)
+                time.sleep(0.3)
+                assert is_running(child), f"{mode}: killed too soon"
+                ended = functools.partial(gone, pid, child)
+                assert wait_until(ended), f"{mode}: survived"
+            assert wait_until(lambda: not app.multi.ending), app.multi.ending
 
             session, pid, child = start(app, "stubborn")
-        # Stopping the server ends them too.
+        # Stopping the server ends them too, and no more are started.
         assert wait_until(lambda: gone(pid, child), 1), "outlived the server"
+        assert post(app).status_code == 503
+        assert not app.multi.proc
+
+
+def check_stop():
+    """Stopping the server with kill closes its terminals."""
+    command = "trap '' HUP; echo \"pid $$\"; exec sleep 60"
+    server, port, base = start_server(f"--command={command}")
+    try:
+        session = new_session(f"{base}u")
+
+        def send(keys):
+            return fetch(f"{base}u", terminal_query(session, keys))
+
+        screen = wait_for_screen(send, "", "pid [0-9]+")
+        pid = int(re.search("pid ([0-9]+)", screen_text(screen))[1])
+        # A second server can't use the same port, and mustn't hang.
+        second = subprocess.run(
+            [COMMAND, f"--port={port}"], check=False, capture_output=True, timeout=10
+        )
+        assert second.returncode != 0, second
+        server.terminate()
+        assert server.wait(10) == 0, server.returncode
+        assert wait_until(lambda: not is_running(pid)), "outlived the server"
+    finally:
+        server.kill()
+        server.communicate(timeout=10)
 
 
 def check_many_descriptors():
@@ -533,6 +569,7 @@ def main():
     check_unused()
     check_output_fault()
     check_processes()
+    check_stop()
     check_many_descriptors()
     print("smoke test passed")
 
