@@ -462,8 +462,17 @@ class Multiplex:
         self.thread = threading.Thread(target=self.loop)
         self.alive = 1
         # synchronize methods
-        names = ["create", "fds", "proc_read", "proc_write", "proc_flush", "pending"]
-        for name in [*names, "dump", "die", "run"]:
+        for name in [
+            "create",
+            "fds",
+            "proc_read",
+            "proc_write",
+            "proc_flush",
+            "pending",
+            "dump",
+            "die",
+            "run",
+        ]:
             orig = getattr(self, name)
             setattr(self, name, SynchronizedMethod(self.lock, orig))
         self.thread.start()
