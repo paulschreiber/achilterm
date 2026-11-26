@@ -47,6 +47,7 @@ from importlib import metadata
 from io import BytesIO
 from socket import gethostname
 from socketserver import ThreadingMixIn
+from urllib.parse import urlsplit
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 import webob
@@ -83,6 +84,16 @@ UNPRINTABLE = frozenset(
         ],
     )
 )
+
+
+# Close a terminal when its browser hasn't asked for updates for this many
+# seconds. Browsers may slow a hidden tab's requests to one a minute.
+DEFAULT_TIMEOUT = 300
+# Names a request may use for this server. Refusing others stops a website from
+# reaching it by pointing its own name at this machine.
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+# Session IDs are 128 random bits, chosen by the page, as hexadecimal.
+SESSION_ID = re.compile("[0-9a-f]{32}")
 
 
 class Terminal:
@@ -477,9 +488,10 @@ class SynchronizedMethod:
 
 
 class Multiplex:
-    def __init__(self, cmd=None):
+    def __init__(self, cmd=None, timeout=DEFAULT_TIMEOUT):
         # signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         self.cmd = cmd
+        self.timeout = timeout
         # The kernel reuses file descriptors, so sessions are keyed by a number
         # that is never reused.
         self.proc = {}
@@ -495,6 +507,7 @@ class Multiplex:
             "proc_write",
             "proc_flush",
             "pending",
+            "expire",
             "dump",
             "die",
             "run",
@@ -546,7 +559,8 @@ class Multiplex:
                 "pid": pid,
                 "term": Terminal(w, h),
                 "input": bytearray(),
-                "time": time.time(),
+                # when the browser last asked for the screen
+                "seen": time.monotonic(),
             }
             return key
 
@@ -561,21 +575,20 @@ class Multiplex:
         return {proc["fd"]: key for key, proc in self.proc.items()}
 
     def proc_close(self, key):
-        proc = self.proc.pop(key)
-        try:
-            os.close(proc["fd"])
-            os.kill(proc["pid"], signal.SIGTERM)
-        except OSError:
-            pass
+        proc = self.proc.pop(key, None)
+        if proc:
+            try:
+                os.close(proc["fd"])
+                os.kill(proc["pid"], signal.SIGTERM)
+            except OSError:
+                pass
 
-    def proc_kill(self, key):
-        if key in self.proc:
-            self.proc[key]["time"] = 0
-        t = time.time()
-        for i in list(self.proc):
-            t0 = self.proc[i]["time"]
-            if (t - t0) > 120:
-                self.proc_close(i)
+    def expire(self):
+        """Close the sessions that no browser is showing any more."""
+        cutoff = time.monotonic() - self.timeout
+        for key, proc in list(self.proc.items()):
+            if proc["seen"] < cutoff:
+                self.proc_close(key)
 
     def proc_read(self, key):
         try:
@@ -583,11 +596,10 @@ class Multiplex:
             t = proc["term"]
             t.write(os.read(proc["fd"], 65536))
             reply = t.read()
-            proc["time"] = time.time()
             if reply:
                 self.proc_write(key, reply)
         except (KeyError, OSError):
-            self.proc_kill(key)
+            self.proc_close(key)
 
     def proc_write(self, key, s):
         if key in self.proc:
@@ -604,7 +616,7 @@ class Multiplex:
         except BlockingIOError:
             pass
         except (KeyError, OSError):
-            self.proc_kill(key)
+            self.proc_close(key)
 
     def pending(self):
         """Like fds(), for sessions with input still to be written."""
@@ -612,13 +624,14 @@ class Multiplex:
 
     def dump(self, key, color=1):
         try:
-            self.proc[key]["time"] = time.time()
+            self.proc[key]["seen"] = time.monotonic()
             return self.proc[key]["term"].dumphtml(color)
         except KeyError:
             return False
 
     def loop(self):
         while self.run():
+            self.expire()
             reading = self.fds()
             writing = self.pending()
             try:
@@ -641,7 +654,14 @@ class Multiplex:
 
 class AchilTerm:
     def __init__(
-        self, cmd=None, index_file="achilterm.html", lite=False, width=80, height=25
+        self,
+        cmd=None,
+        index_file="achilterm.html",
+        lite=False,
+        width=80,
+        height=25,
+        timeout=DEFAULT_TIMEOUT,
+        allow_hosts=(),
     ):
         os.chdir(os.path.normpath(os.path.dirname(__file__)))
         if lite:
@@ -657,20 +677,43 @@ class AchilTerm:
         self.mime[".html"] = "text/html; charset=UTF-8"
         # Older Pythons map .js to a type that WebOb won't write text to.
         self.mime[".js"] = "text/javascript; charset=UTF-8"
-        self.multi = Multiplex(cmd)
+        self.hosts = LOCAL_HOSTS | {host.lower() for host in allow_hosts}
+        self.multi = Multiplex(cmd, timeout)
         self.session = {}
+
+    def refusal(self, req):
+        """Why a request mustn't reach a terminal, as a status and a message."""
+        try:
+            host = urlsplit("//" + req.environ.get("HTTP_HOST", "")).hostname
+        except ValueError:
+            host = None
+        if host not in self.hosts:
+            return 403, "Unknown host name. Start achilterm with --allow-host."
+        if not req.environ["PATH_INFO"].endswith("/u"):
+            return None
+        # Keystrokes are only accepted in a request body, because servers and
+        # proxies commonly log addresses.
+        if req.method != "POST":
+            return 405, "Use POST."
+        # Another website's page can't send this header without permission, which
+        # is never given.
+        if "X-Achilterm" not in req.headers:
+            return 403, "Missing X-Achilterm header. Reload the page."
+        if not SESSION_ID.fullmatch(req.POST.get("s", "")):
+            return 400, "Invalid session ID. Reload the page."
+        return None
 
     def __call__(self, environ, start_response):
         req = webob.Request(environ)
         res = webob.Response()
-        if req.environ["PATH_INFO"].endswith("/u"):
-            # Keystrokes are only accepted in a request body, because servers
-            # and proxies commonly log addresses.
-            if req.method != "POST":
-                res.status = 405
+        refused = self.refusal(req)
+        if refused:
+            res.status, res.text = refused
+            res.content_type = "text/plain"
+            if res.status_code == 405:
                 res.headers["Allow"] = "POST"
-                return res(environ, start_response)
-            s = req.POST.get("s", "")
+        elif req.environ["PATH_INFO"].endswith("/u"):
+            s = req.POST["s"]
             k = req.POST.get("k", "")
             c = req.POST.get("c", "")
             w = int(req.POST.get("w", 0))
@@ -781,7 +824,28 @@ def main():
         default="25",
         help="set the height (default: 25)",
     )
+    parser.add_option(
+        "--timeout",
+        type="int",
+        dest="timeout",
+        default=DEFAULT_TIMEOUT,
+        help="close a terminal not shown by a browser for this many seconds "
+        "(default: %default)",
+    )
+    parser.add_option(
+        "--allow-host",
+        action="append",
+        dest="allow_hosts",
+        default=[],
+        metavar="NAME",
+        help="also accept requests for this host name; repeat for more "
+        "(default: only localhost)",
+    )
     (o, _a) = parser.parse_args()
+    # A page asks for the screen at least every couple of seconds.
+    if o.timeout < 5:
+        parser.error("--timeout must be at least 5 seconds")
+    options = {"timeout": o.timeout, "allow_hosts": o.allow_hosts}
     if o.daemon:
         pid = os.fork()
         if pid == 0:
@@ -808,9 +872,8 @@ def main():
     else:
         handler_class = NoLogWSGIRequestHandler
     if o.index_file:
-        at = AchilTerm(o.cmd, os.path.abspath(o.index_file), o.lite, o.width, o.height)
-    else:
-        at = AchilTerm(o.cmd, lite=o.lite, width=o.width, height=o.height)
+        options["index_file"] = os.path.abspath(o.index_file)
+    at = AchilTerm(o.cmd, lite=o.lite, width=o.width, height=o.height, **options)
     try:
         make_server(
             "localhost",

@@ -56,6 +56,15 @@ Set the terminal width (default: 80).
 \fB\-H\fR \fIHEIGHT\fR, \fB\-\-height\fR=\fIHEIGHT\fR
 Set the terminal height (default: 25).
 
+.TP
+\fB\-\-timeout\fR=\fITIMEOUT\fR
+Close a terminal when no browser has asked for its screen for this many seconds
+(default: 300, at least 5).
+.TP
+\fB\-\-allow\-host\fR=\fINAME\fR
+Also accept requests for this host name; repeat for more names. Only localhost
+is accepted otherwise.
+
 .SH AUTHOR
 Florent Gallaire <fgallaire@gmail.com>
 .br

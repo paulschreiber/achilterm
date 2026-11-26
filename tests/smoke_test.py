@@ -1,11 +1,13 @@
 """Start the installed achilterm command and exercise it over HTTP."""
 
 import gzip
+import hashlib
 import os
 import re
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -22,12 +24,109 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def fetch(url, data=None):
-    with urllib.request.urlopen(url, data, timeout=10) as response:
+# The header the terminal page sends with its requests.
+PAGE_HEADERS = {"X-Achilterm": "1"}
+
+
+def fetch(url, data=None, headers=PAGE_HEADERS):
+    request = urllib.request.Request(url, data, headers)
+    with urllib.request.urlopen(request, timeout=10) as response:
         body = response.read()
         if response.headers.get("Content-Encoding") == "gzip":
             body = gzip.decompress(body)
         return body.decode()
+
+
+def status(url, data=None, headers=PAGE_HEADERS):
+    try:
+        fetch(url, data, headers)
+    except urllib.error.HTTPError as error:
+        return error.code
+    return 200
+
+
+def session_id(name):
+    return hashlib.sha256(name.encode()).hexdigest()[:32]
+
+
+def terminal_query(name, keys=""):
+    fields = {"s": session_id(name), "w": 80, "h": 25, "c": 1, "k": keys}
+    return urllib.parse.urlencode(fields).encode()
+
+
+def is_running(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as stat:
+            # An ended process stays as a zombie until it is collected.
+            return stat.read().rpartition(")")[2].split()[0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+def start_server(*options):
+    port = free_port()
+    base = f"http://127.0.0.1:{port}/"
+    server = subprocess.Popen(
+        [COMMAND, f"--port={port}", "--command=exec /bin/sh", *options],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    for attempt in range(50):
+        try:
+            fetch(base)
+            return server, port, base
+        except OSError:
+            time.sleep(0.1)
+    server.kill()
+    raise AssertionError("server did not start")
+
+
+def check_access_and_expiry():
+    server, port, base = start_server(
+        "--timeout=5", "--allow-host=Terminal.Example.com"
+    )
+    url = f"{base}u"
+    try:
+        # Only requests from the terminal page, with a random session ID.
+        assert status(url, terminal_query("a"), headers={}) == 403
+        for bad in ("", "1", "123456789", "g" * 32, "a" * 33):
+            query = urllib.parse.urlencode({"s": bad, "k": ""}).encode()
+            assert status(url, query) == 400, bad
+
+        # Only for localhost and the names that were allowed.
+        for host, expected in (
+            (f"localhost:{port}", 200),
+            ("[::1]", 200),
+            ("terminal.example.com", 200),
+            ("attacker.example", 403),
+            ("localhost.attacker.example", 403),
+            ("", 403),
+        ):
+            headers = {**PAGE_HEADERS, "Host": host}
+            assert status(base, headers=headers) == expected, host
+            assert status(url, terminal_query("h"), headers) == expected, host
+
+        # A terminal closes once no page asks for it, even while it has output,
+        # and stays open while one does.
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("shown", "left"):
+                fetch(url, terminal_query(name))
+                command = f"echo $$ > {directory}/{name}; "
+                command += "while :; do echo busy; sleep 1; done\r"
+                fetch(url, terminal_query(name, command))
+            for attempt in range(16):
+                time.sleep(0.5)
+                fetch(url, terminal_query("shown"))
+            pids = {}
+            for name in ("shown", "left"):
+                with open(f"{directory}/{name}") as file:
+                    pids[name] = int(file.read())
+            assert is_running(pids["shown"]), "a shown terminal was closed"
+            assert not is_running(pids["left"]), "an abandoned terminal stayed open"
+    finally:
+        server.terminate()
+        errors = server.communicate(timeout=10)[1].decode()
+    assert "Traceback" not in errors, errors
 
 
 def screen_text(response):
@@ -40,20 +139,11 @@ def main():
     ).stdout
     assert version("achilterm-ng") in reported, reported
 
-    port = free_port()
-    base = f"http://127.0.0.1:{port}/"
-    server = subprocess.Popen(
-        [COMMAND, f"--port={port}", "--command=exec /bin/sh"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
+    server, port, base = start_server()
 
     def terminal(session, keys=""):
-        query = urllib.parse.urlencode(
-            {"s": session, "w": 80, "h": 25, "c": 1, "k": keys}
-        )
         # POST, as the browser does, so that large input fits.
-        response = fetch(f"{base}u", query.encode())
+        response = fetch(f"{base}u", terminal_query(session, keys))
         # The browser can't update the screen from invalid XML.
         ElementTree.fromstring(response.encode())
         return response
@@ -70,14 +160,7 @@ def main():
         raise AssertionError(f"{pattern!r} never appeared: {screen}")
 
     try:
-        for attempt in range(50):
-            try:
-                index = fetch(base)
-                break
-            except OSError:
-                time.sleep(0.1)
-        else:
-            raise AssertionError("server did not start")
+        index = fetch(base)
         assert "github.com/paulschreiber/achilterm" in index, "no source link"
         for name in ("achilterm.js", "achilterm.css"):
             assert fetch(base + name), name
@@ -160,6 +243,7 @@ def main():
         errors = server.communicate(timeout=10)[1].decode()
 
     assert "Traceback" not in errors, errors
+    check_access_and_expiry()
     print("smoke test passed")
 
 

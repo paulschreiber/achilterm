@@ -146,6 +146,10 @@ Commandline usage
       -L, --lite                 use Achiltermlite
       -w WIDTH, --width=WIDTH    set the width (default: 80)
       -H HEIGHT, --height=HEIGHT set the height (default: 25)
+      --timeout=TIMEOUT          close a terminal not shown by a browser for this
+                                 many seconds (default: 300, at least 5)
+      --allow-host=NAME          also accept requests for this host name; repeat
+                                 for more (default: only localhost)
 
 Apache configuration example
 ----------------------------
@@ -157,6 +161,11 @@ consider restricting who can reach it. This Apache 2.4 example serves it at
 Enable the modules it needs (on Debian or Ubuntu):
 
     $ sudo a2enmod ssl proxy proxy_http
+
+Achilterm only answers requests for ``localhost``, which is what Apache sends
+in this example. If your proxy passes on the public name instead, as with
+``ProxyPreserveHost On``, start Achilterm with
+``--allow-host=terminal.example.com``.
 
 Add this virtual host, using your own server name and certificate:
 
@@ -216,6 +225,11 @@ Changelog
    browsers, and remove support for Internet Explorer
 
 -  Fix large input, such as a long paste, being cut off
+
+-  Use random 128-bit session IDs, and refuse requests from other websites or
+   for unknown host names (see ``--allow-host``)
+
+-  Close terminals whose page is no longer open (see ``--timeout``)
 
 -  Fix a security flaw that could connect a tab whose shell had ended to
    another user's terminal
