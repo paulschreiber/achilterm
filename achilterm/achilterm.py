@@ -95,6 +95,8 @@ DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
 # Kill what's left of a closed terminal's command after this many seconds.
 KILL_DELAY = 5
+# Signals that stop the server.
+STOP_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 # Names a request may use for this server. Refusing others stops a website from
 # reaching it by pointing its own name at this machine.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -562,11 +564,17 @@ class Multiplex:
         """Start a terminal and return its session ID, or None while stopping."""
         if not self.alive:
             return None
-        pid, fd = pty.fork()
+        # Hold signals back until the child stops handling them as the server does.
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+        try:
+            pid, fd = pty.fork()
+            if pid == 0:
+                # The command gets the usual handling: Python ignores the last two.
+                for signum in (*STOP_SIGNALS, signal.SIGPIPE, signal.SIGXFSZ):
+                    signal.signal(signum, signal.SIG_DFL)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         if pid == 0:
-            # The command mustn't inherit how the server handles these signals.
-            for signum in (signal.SIGINT, signal.SIGTERM):
-                signal.signal(signum, signal.SIG_DFL)
             # The command mustn't inherit other terminals or connections.
             try:
                 end = max(map(int, os.listdir("/proc/self/fd"))) + 1
@@ -633,7 +641,10 @@ class Multiplex:
             with contextlib.suppress(OSError):
                 os.close(proc["fd"])
             with contextlib.suppress(OSError):
-                os.killpg(proc["pid"], signal.SIGTERM)
+                try:
+                    os.killpg(proc["pid"], signal.SIGTERM)
+                except ProcessLookupError:  # it doesn't lead its group yet
+                    os.kill(proc["pid"], signal.SIGTERM)
             self.ending[proc["pid"]] = time.monotonic() + KILL_DELAY
 
     def reap(self):
@@ -644,6 +655,11 @@ class Multiplex:
                 collected = os.waitpid(pid, os.WNOHANG)[0] != 0
             except ChildProcessError:
                 collected = True  # earlier, or by something else
+            # Also collect the rest of the group, if orphans come to this process,
+            # as when it's the first in a container.
+            with contextlib.suppress(ChildProcessError):
+                while os.waitpid(-pid, os.WNOHANG)[0]:
+                    pass
             # The command leads a process group, holding what it started. The
             # group's number isn't used again while anything is left in it.
             try:
@@ -977,8 +993,15 @@ def main():
         timeout=o.timeout,
         allow_hosts=o.allow_hosts,
     )
-    # Stop as for Ctrl-C when asked to by kill, so that terminals are closed.
-    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit())
+
+    def stop(signum, frame):
+        sys.exit()
+
+    # Close the terminals when asked to stop by kill, or when the terminal running
+    # the server closes, unless that's to be ignored, as under nohup.
+    signal.signal(signal.SIGTERM, stop)
+    if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN:
+        signal.signal(signal.SIGHUP, stop)
     try:
         make_server(
             "localhost",
@@ -991,7 +1014,7 @@ def main():
         sys.excepthook(*sys.exc_info())
     finally:
         # Finish closing the terminals even if asked to stop again.
-        for signum in (signal.SIGINT, signal.SIGTERM):
+        for signum in STOP_SIGNALS:
             signal.signal(signum, signal.SIG_IGN)
         at.multi.die()
         at.multi.thread.join()
