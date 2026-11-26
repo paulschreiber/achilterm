@@ -434,6 +434,8 @@ def connection_refused(port):
             return False
     except ConnectionRefusedError:
         return True
+    except (ConnectionResetError, TimeoutError):
+        return False  # caught as it closed, so try again
 
 
 def check_stop(stop, ignored_by_command="HUP"):
@@ -476,7 +478,8 @@ def check_stop(stop, ignored_by_command="HUP"):
         if "TERM" in ignored_by_command:
             # While it waits to kill the command, the server takes no connections.
             refused = functools.partial(connection_refused, port)
-            assert wait_until(refused, 2) and server.poll() is None, "still listening"
+            assert wait_until(refused, 2), "still listening"
+            assert server.poll() is None, "didn't wait to kill the command"
         # More signals, including while it waits to kill a command, mustn't cut
         # that short or cause errors.
         for attempt in range(20):

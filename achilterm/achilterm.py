@@ -566,9 +566,11 @@ class Multiplex:
             return None
         # Hold signals back while forking, so that the child handles none as this
         # process, or one that includes this application, would.
-        mask = signal.pthread_sigmask(signal.SIG_BLOCK, signal.valid_signals())
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])  # what's blocked now
         pid = None
         try:
+            # Blocking can run a waiting handler, which may raise: restore if so.
+            signal.pthread_sigmask(signal.SIG_BLOCK, signal.valid_signals())
             pid, fd = pty.fork()
         finally:
             if pid != 0:
