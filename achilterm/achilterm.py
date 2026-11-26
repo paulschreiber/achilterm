@@ -904,6 +904,11 @@ class AchilTerm:
         # is never given.
         if "X-Achilterm" not in req.headers:
             return refuse(403, "Missing X-Achilterm header. Reload the page.")
+        # The page sends a plain form in UTF-8. Reading anything else can fail, or
+        # give uploaded files where text is expected.
+        form = "application/x-www-form-urlencoded"
+        if (req.content_type, req.charset) != (form, "UTF-8"):
+            return refuse(415, "Send a UTF-8 form. Reload the page.")
         # Only an empty session ID asks for a new terminal, not a missing one.
         if "s" not in req.POST:
             return refuse(400, "Missing session ID. Reload the page.")

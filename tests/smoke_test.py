@@ -801,6 +801,39 @@ def check_sizes():
             assert (len(rows[0]), len(rows)) == expected, (fields, len(rows))
 
 
+def check_content_types():
+    """Only a UTF-8 form, as the page sends, reaches a terminal."""
+    form = "application/x-www-form-urlencoded"
+    upload = (
+        b'--b\r\nContent-Disposition: form-data; name="s"\r\n\r\n\r\n--b\r\n'
+        b'Content-Disposition: form-data; name="k"; filename="k"\r\n\r\nx\r\n--b--\r\n'
+    )
+    with running_app("sleep 30") as app:
+        for content_type, body in (
+            (f"{form};charset=nonsense", terminal_query()),
+            (f"{form};charset=latin-1", terminal_query()),
+            ("multipart/form-data", terminal_query()),
+            ("multipart/form-data; boundary=b", upload),
+            ("text/plain", terminal_query()),
+            ("", terminal_query()),
+        ):
+            headers = {**PAGE_HEADERS, "Content-Type": content_type}
+            request = webob.Request.blank(
+                "/u", method="POST", body=body, headers=headers
+            )
+            response = request.get_response(app)
+            assert response.status_code == 415, (content_type, response.status)
+        assert not app.multi.proc, "a refused request started a terminal"
+        # The browser names the character set; other clients may not.
+        for content_type in (form, f"{form};charset=UTF-8", f"{form}; charset=utf8"):
+            headers = {**PAGE_HEADERS, "Content-Type": content_type}
+            request = webob.Request.blank(
+                "/u", method="POST", body=terminal_query(), headers=headers
+            )
+            response = request.get_response(app)
+            assert response.status_code == 200, (content_type, response.status)
+
+
 def check_many_descriptors():
     """Terminals must work when their descriptors are numbered 1024 or higher."""
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -957,6 +990,7 @@ def main():
     check_failed_start()
     check_without_path()
     check_sizes()
+    check_content_types()
     check_many_descriptors()
     check_announcement()
     print("smoke test passed")
