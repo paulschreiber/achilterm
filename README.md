@@ -217,6 +217,9 @@ Changelog
 
 -  Fix large input, such as a long paste, being cut off
 
+-  Display all Unicode characters correctly, and ignore control characters
+   that could stop the screen updating
+
 -  Fix output that stopped screen updates for every session, such as a split
    or invalid character, or a program asking the terminal to identify itself
 

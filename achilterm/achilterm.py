@@ -57,6 +57,20 @@ except metadata.PackageNotFoundError:
     __version__ = "unknown"
 
 
+# Colors are held as 0xBBFF00: a byte each for background and foreground. A
+# screen cell holds those two bytes above a character in its low 24 bits, which
+# is enough for any Unicode character.
+CHAR_BITS = 24
+DEFAULT_SGR = 0x000700
+BLANK = DEFAULT_SGR >> 8 << CHAR_BITS
+
+
+def is_printable(c):
+    # Control characters aren't shown, and some would make the XML sent to the
+    # browser invalid.
+    return c >= " " and not "\x7f" <= c <= "\x9f" and c not in "\ufffe\uffff"
+
+
 class Terminal:
     def __init__(self, width=80, height=24):
         self.width = width
@@ -126,13 +140,13 @@ class Terminal:
                 self.csi_seq[i] = (getattr(self, "csi_" + i), [1])
 
     def reset(self, s=""):
-        self.scr = array.array("i", [0x000700] * (self.width * self.height))
+        self.scr = array.array("q", [BLANK] * (self.width * self.height))
         self.st = 0
         self.sb = self.height - 1
         self.cx_bak = self.cx = 0
         self.cy_bak = self.cy = 0
         self.cl = 0
-        self.sgr = 0x000700
+        self.sgr = DEFAULT_SGR
         self.buf = ""
         self.outbuf = ""
         self.last_html = ""
@@ -146,7 +160,7 @@ class Terminal:
 
     def zero(self, y1, x1, y2, x2):
         w = self.width * (y2 - y1) + x2 - x1 + 1
-        z = array.array("i", [0x000700] * w)
+        z = array.array("q", [BLANK] * w)
         self.scr[self.width * y1 + x1 : self.width * y2 + x2 + 1] = z
 
     def scroll_up(self, y1, y2):
@@ -182,7 +196,8 @@ class Terminal:
         if self.cl:
             self.cursor_down()
             self.cx = 0
-        self.scr[(self.cy * self.width) + self.cx] = self.sgr | ord(c)
+        cell = self.sgr >> 8 << CHAR_BITS | ord(c)
+        self.scr[(self.cy * self.width) + self.cx] = cell
         self.cursor_right()
 
     def esc_0x08(self, s):
@@ -339,7 +354,7 @@ class Terminal:
     def csi_m(self, l):
         for i in l:
             if i == 0 or i == 39 or i == 49 or i == 27:
-                self.sgr = 0x000700
+                self.sgr = DEFAULT_SGR
             elif i == 1:
                 self.sgr = self.sgr | 0x000800
             elif i == 7:
@@ -392,7 +407,7 @@ class Terminal:
                 self.escape()
             elif i == "\x1b":
                 self.buf += i
-            else:
+            elif is_printable(i):
                 self.echo(i)
 
     def read(self):
@@ -407,9 +422,9 @@ class Terminal:
         span = ""
         span_bg, span_fg = -1, -1
         for i in range(h * w):
-            q, c = divmod(self.scr[i], 256)
+            colors, c = divmod(self.scr[i], 1 << CHAR_BITS)
             if color:
-                bg, fg = divmod(q, 256)
+                bg, fg = divmod(colors, 256)
             else:
                 bg, fg = 0, 7
             if i == self.cy * w + self.cx:
@@ -421,10 +436,8 @@ class Terminal:
                 span_bg, span_fg = bg, fg
             if c == 0:
                 span += " "
-            elif c > 0x10000:
-                span += "?"
             else:
-                span += chr(c & 0xFFFF)
+                span += chr(c)
             if i % w == w - 1:
                 span += "\n"
         r = f'<?xml version="1.0" encoding="UTF-8"?><pre class="term">{r}</pre>'
