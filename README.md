@@ -229,6 +229,9 @@ Changelog
 -  Fix terminals stopping when the server has more than about a thousand files
    and connections open
 
+-  Clean up the processes of closed terminals, killing a command that is still
+   running after five seconds
+
 -  Have the server issue random 128-bit session IDs, and refuse requests from
    other websites or for unknown host names (see ``--allow-host``)
 
