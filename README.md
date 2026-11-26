@@ -147,26 +147,59 @@ Commandline usage
       -w WIDTH, --width=WIDTH    set the width (default: 80)
       -H HEIGHT, --height=HEIGHT set the height (default: 25)
 
-Configuration example
----------------------
+Apache configuration example
+----------------------------
 
-        Listen 443
-        NameVirtualHost *:443
+Anyone who can reach Achilterm can try to log in, so put it behind HTTPS and
+restrict who can reach it. This Apache 2.4 example serves it at
+``https://terminal.example.com/achilterm/`` and asks for a password before
+showing the terminal's own login.
 
-        <VirtualHost *:443>
-           ServerName localhost
-           SSLEngine On
-           SSLCertificateKeyFile ssl/apache.pem
-           SSLCertificateFile ssl/apache.pem
+Enable the modules it needs, and create a user for the password prompt (on
+Debian or Ubuntu):
 
-           ProxyRequests Off
-           <Proxy *>
-                   Order deny,allow
-                   Allow from all
-           </Proxy>
-           ProxyPass /achilterm/ http://localhost:8022/
-           ProxyPassReverse /achilterm/ http://localhost:8022/
-        </VirtualHost>
+    $ sudo a2enmod ssl proxy proxy_http auth_basic
+    $ sudo apt install apache2-utils
+    $ sudo htpasswd -c -B /etc/apache2/achilterm.htpasswd yourname
+
+Add this virtual host, using your own server name and certificate:
+
+    <VirtualHost *:443>
+        ServerName terminal.example.com
+
+        SSLEngine on
+        SSLCertificateFile /etc/ssl/certs/terminal.example.com.pem
+        SSLCertificateKeyFile /etc/ssl/private/terminal.example.com.key
+
+        RedirectMatch permanent "^/achilterm$" "/achilterm/"
+
+        <Location "/achilterm/">
+            AuthType Basic
+            AuthName "Terminal"
+            AuthUserFile /etc/apache2/achilterm.htpasswd
+            Require valid-user
+
+            ProxyPass "http://localhost:8022/"
+            ProxyPassReverse "http://localhost:8022/"
+        </Location>
+    </VirtualHost>
+
+Then check the configuration and reload Apache:
+
+    $ sudo apache2ctl configtest
+    $ sudo systemctl reload apache2
+
+To limit access to known networks as well, replace ``Require valid-user`` with:
+
+    <RequireAll>
+        Require valid-user
+        Require ip 192.0.2.0/24
+    </RequireAll>
+
+Logins made through Achilterm reach SSH from ``localhost``, so tools that
+block addresses after failed logins, such as fail2ban, normally ignore them.
+Choose a strong password for the Apache prompt, and consider limiting
+repeated attempts there.
 
 Changelog
 ---------
@@ -205,6 +238,8 @@ Changelog
 -  Add a systemd service unit
 
 -  Link to the source code from the terminal page
+
+-  Update the Apache example for Apache 2.4, with access control
 
 -  Move the project to GitHub
 
