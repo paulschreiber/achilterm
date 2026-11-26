@@ -394,7 +394,7 @@ def check_cleanup():
 
     def ends(pid, child, seconds=5):
         return wait_until(
-            lambda: is_collected(pid) and not is_running(child), seconds=seconds
+            lambda: is_collected(pid) and is_collected(child), seconds=seconds
         )
 
     with running_app(command) as app:
@@ -428,7 +428,12 @@ def check_stop(stop):
     command = (
         "grep SigIgn /proc/self/status; trap '' HUP; echo \"pid $$\"; exec sleep 60"
     )
-    server, port, base = start_server(f"--command={command}")
+    # The server leaves a signal alone if it inherits ignoring it.
+    inherited = signal.signal(stop, signal.SIG_DFL)
+    try:
+        server, port, base = start_server(f"--command={command}")
+    finally:
+        signal.signal(stop, inherited)
 
     def send(session, keys):
         return fetch(f"{base}u", terminal_query(session, keys))
@@ -437,17 +442,21 @@ def check_stop(stop):
         show = functools.partial(send, new_session(f"{base}u"))
         screen = screen_text(wait_for_screen(show, "", "pid [0-9]+"))
         pid = int(re.search("pid ([0-9]+)", screen)[1])
-        # The command doesn't ignore broken pipes or oversized files.
+        # The command doesn't ignore broken pipes, oversized files or Ctrl-\\.
         ignored = int(re.search("SigIgn:\\s+([0-9a-f]+)", screen)[1], 16)
-        for signum in (signal.SIGPIPE, signal.SIGXFSZ):
+        for signum in (signal.SIGPIPE, signal.SIGXFSZ, signal.SIGQUIT):
             assert not ignored >> (signum - 1) & 1, (signum, hex(ignored))
         # A second server can't use the same port, and mustn't hang.
         second = subprocess.run(
             [COMMAND, f"--port={port}"], check=False, capture_output=True, timeout=10
         )
         assert second.returncode != 0, second
-        server.send_signal(stop)
-        assert server.wait(10) == 0, (stop, server.returncode)
+        # More signals while it stops mustn't cut that short or cause errors.
+        for signum in (stop, signal.SIGTERM, stop):
+            server.send_signal(signum)
+        errors = server.communicate(timeout=10)[1].decode()
+        assert server.returncode == 0, (stop, server.returncode, errors)
+        assert "Traceback" not in errors, errors
         assert wait_until(lambda: not is_running(pid)), f"outlived {stop!r}"
     finally:
         server.kill()
@@ -590,7 +599,7 @@ def main():
     check_unused()
     check_output_fault()
     check_processes()
-    for stop in (signal.SIGTERM, signal.SIGHUP):
+    for stop in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         check_stop(stop)
     check_many_descriptors()
     print("smoke test passed")

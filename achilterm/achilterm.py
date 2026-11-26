@@ -569,8 +569,10 @@ class Multiplex:
         try:
             pid, fd = pty.fork()
             if pid == 0:
-                # The command gets the usual handling: Python ignores the last two.
-                for signum in (*STOP_SIGNALS, signal.SIGPIPE, signal.SIGXFSZ):
+                # The command gets the usual handling, whatever the server inherited,
+                # or Python chose, such as ignoring broken pipes.
+                others = (signal.SIGQUIT, signal.SIGPIPE, signal.SIGXFSZ)
+                for signum in (*STOP_SIGNALS, *others):
                     signal.signal(signum, signal.SIG_DFL)
         finally:
             signal.pthread_sigmask(signal.SIG_SETMASK, mask)
@@ -658,8 +660,8 @@ class Multiplex:
             # Also collect the rest of the group, if orphans come to this process,
             # as when it's the first in a container.
             with contextlib.suppress(ChildProcessError):
-                while os.waitpid(-pid, os.WNOHANG)[0]:
-                    pass
+                while ended := os.waitpid(-pid, os.WNOHANG)[0]:
+                    collected = collected or ended == pid
             # The command leads a process group, holding what it started. The
             # group's number isn't used again while anything is left in it.
             try:
@@ -994,15 +996,22 @@ def main():
         allow_hosts=o.allow_hosts,
     )
 
-    def stop(signum, frame):
-        sys.exit()
+    stopping = False
 
-    # Close the terminals when asked to stop by kill, or when the terminal running
-    # the server closes, unless that's to be ignored, as under nohup.
-    signal.signal(signal.SIGTERM, stop)
-    if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN:
-        signal.signal(signal.SIGHUP, stop)
+    def stop(signum, frame):
+        nonlocal stopping
+        # Only the first counts, so that closing the terminals isn't cut short.
+        if not stopping:
+            stopping = True
+            sys.exit()
+
     try:
+        # Close the terminals when stopped, as by Ctrl-C, kill or closing the
+        # terminal running the server, unless a signal is meant to be ignored, as
+        # hangups are under nohup.
+        for signum in STOP_SIGNALS:
+            if signal.getsignal(signum) != signal.SIG_IGN:
+                signal.signal(signum, stop)
         make_server(
             "localhost",
             int(o.port),
@@ -1010,12 +1019,8 @@ def main():
             handler_class=handler_class,
             server_class=ThreadingWSGIServer,
         ).serve_forever()
-    except KeyboardInterrupt:
-        sys.excepthook(*sys.exc_info())
     finally:
-        # Finish closing the terminals even if asked to stop again.
-        for signum in STOP_SIGNALS:
-            signal.signal(signum, signal.SIG_IGN)
+        stopping = True
         at.multi.die()
         at.multi.thread.join()
 
