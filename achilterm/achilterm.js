@@ -18,7 +18,6 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	var div=document.getElementById(id);
 	var dstat=document.createElement('pre');
 	var sled=document.createElement('span');
-	var opt_get=document.createElement('a');
 	var opt_color=document.createElement('a');
 	var opt_paste=document.createElement('a');
 	var sdebug=document.createElement('span');
@@ -36,10 +35,6 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		opt.innerHTML=' '+name+' ';
 		dstat.appendChild(opt);
 		dstat.appendChild(document.createTextNode(' '));
-	}
-	function do_get(event) {
-		opt_get.className=(opt_get.className=='off')?'on':'off';
-		debug('GET '+opt_get.className);
 	}
 	function do_color(event) {
 		var o=opt_color.className=(opt_color.className=='off')?'on':'off';
@@ -76,14 +71,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 				send+=keybuf.pop();
 			}
 			var query=query1+send;
-			if(opt_get.className=='on') {
-				r.open("GET","u?"+query,true);
-				if(ie) {
-					r.setRequestHeader("If-Modified-Since", "Sat, 1 Jan 2000 00:00:00 GMT");
-				}
-			} else {
-				r.open("POST","u",true);
-			}
+			r.open("POST","u",true);
 			r.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
 			r.onreadystatechange = function () {
 //				debug("xhr:"+((new Date).getTime())+" state:"+r.readyState+" status:"+r.status+" statusText:"+r.statusText);
@@ -108,11 +96,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 				}
 			}
 			error_timeout=window.setTimeout(error,5000);
-			if(opt_get.className=='on') {
-				r.send(null);
-			} else {
-				r.send(query);
-			}
+			r.send(query);
 		}
 	}
 	function queue(s) {
@@ -220,18 +204,15 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		dstat.appendChild(document.createTextNode(' '));
 		opt_add(opt_color,'Colors');
 		opt_color.className='on';
-		opt_add(opt_get,'GET');
 		opt_add(opt_paste,'Paste');
 		dstat.appendChild(sdebug);
 		dstat.className='stat';
 		div.appendChild(dstat);
 		div.appendChild(dterm);
 		if(opt_color.addEventListener) {
-			opt_get.addEventListener('click',do_get,true);
 			opt_color.addEventListener('click',do_color,true);
 			opt_paste.addEventListener('click',do_paste,true);
 		} else {
-			opt_get.attachEvent("onclick", do_get);
 			opt_color.attachEvent("onclick", do_color);
 			opt_paste.attachEvent("onclick", do_paste);
 		}

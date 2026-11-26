@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from importlib.metadata import version
@@ -61,6 +62,14 @@ def main():
         assert "github.com/paulschreiber/achilterm" in index, "no source link"
         for name in ("achilterm.js", "achilterm.css"):
             assert fetch(base + name), name
+
+        # Keystrokes must not be accepted in an address, which may be logged.
+        try:
+            fetch(f"{base}u?s=get&w=80&h=25&c=1&k=x")
+        except urllib.error.HTTPError as error:
+            assert error.code == 405, error.code
+        else:
+            raise AssertionError("a GET request was accepted")
 
         # An idle connection must not block other requests.
         with socket.create_connection(("127.0.0.1", port)):
