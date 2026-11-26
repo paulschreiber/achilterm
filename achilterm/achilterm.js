@@ -64,7 +64,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			sled.className='on';
 			var r=new XMLHttpRequest();
 			params.set('k',keybuf);
-			// Output usually follows input shortly, so ask again soon after sending it.
+			// Output usually follows input shortly, so wait only 100 ms after this reply,
+			// even if the screen hasn't changed yet, which doubles this.
 			if(keybuf)
 				rmax=50;
 			keybuf='';
