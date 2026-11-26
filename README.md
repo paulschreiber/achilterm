@@ -88,7 +88,7 @@ Documentation and Caveats
 
 -  Achilterm supports Python 3.11 and above
 
--  Achilterm requires WebOb 1.8.9 or later
+-  Achilterm requires WebOb 1.8.11 or later
 
 -  If run as root achilterm will run ``/bin/login``, otherwise it will run
    ``ssh localhost``. To use an other command use the ``-c`` option.
@@ -175,7 +175,7 @@ Changelog
 
 -  Use ``html.escape()``, as ``cgi.escape()`` was removed from Python
 
--  Drop Python 2 support; require Python 3.11 or later and WebOb 1.8.9 or
+-  Drop Python 2 support; require Python 3.11 or later and WebOb 1.8.11 or
    later
 
 -  Replace ``setup.py`` with ``pyproject.toml``
