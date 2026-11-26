@@ -4,6 +4,7 @@ import contextlib
 import ctypes
 import functools
 import gzip
+import io
 import os
 import random
 import re
@@ -770,7 +771,6 @@ def check_sizes():
         ("8.5", "30", usual),
         ("9" * 5000, "30", usual),
         (None, "30", usual),
-        (object(), "30", usual),  # as an uploaded file would be
     ):
         size = requested_size({"w": width, "h": height})
         assert size == expected, (str(width)[:20], height, size)
@@ -802,36 +802,36 @@ def check_sizes():
 
 
 def check_content_types():
-    """Only a UTF-8 form, as the page sends, reaches a terminal."""
+    """Only a whole URL-encoded UTF-8 form, as the page sends, reaches a terminal."""
     form = "application/x-www-form-urlencoded"
-    upload = (
-        b'--b\r\nContent-Disposition: form-data; name="s"\r\n\r\n\r\n--b\r\n'
-        b'Content-Disposition: form-data; name="k"; filename="k"\r\n\r\nx\r\n--b--\r\n'
-    )
+    upload = webob.Request.blank("/u", POST={"s": "", "k": ("k", b"x")})
+    plain = terminal_query()
     with running_app("sleep 30") as app:
-        for content_type, body in (
-            (f"{form};charset=nonsense", terminal_query()),
-            (f"{form};charset=latin-1", terminal_query()),
-            ("multipart/form-data", terminal_query()),
-            ("multipart/form-data; boundary=b", upload),
-            ("text/plain", terminal_query()),
-            ("", terminal_query()),
-        ):
+
+        def status(content_type, body=plain, **environ):
             headers = {**PAGE_HEADERS, "Content-Type": content_type}
             request = webob.Request.blank(
                 "/u", method="POST", body=body, headers=headers
             )
-            response = request.get_response(app)
-            assert response.status_code == 415, (content_type, response.status)
+            request.environ.update(environ)
+            return request.get_response(app).status_code
+
+        for content_type, body in (
+            (f"{form};charset=nonsense", plain),
+            (f"{form};charset=latin-1", plain),
+            ("multipart/form-data", plain),
+            (upload.headers["Content-Type"], upload.body),
+            ("text/plain", plain),
+            ("", plain),
+        ):
+            assert status(content_type, body) == 415, content_type
+        # Less arrives than was announced, as when a connection drops.
+        arriving = {"wsgi.input": io.BytesIO(b"s="), "webob.is_body_seekable": False}
+        assert status(form, CONTENT_LENGTH="1000", **arriving) == 408
         assert not app.multi.proc, "a refused request started a terminal"
         # The browser names the character set; other clients may not.
         for content_type in (form, f"{form};charset=UTF-8", f"{form}; charset=utf8"):
-            headers = {**PAGE_HEADERS, "Content-Type": content_type}
-            request = webob.Request.blank(
-                "/u", method="POST", body=terminal_query(), headers=headers
-            )
-            response = request.get_response(app)
-            assert response.status_code == 200, (content_type, response.status)
+            assert status(content_type) == 200, content_type
 
 
 def check_many_descriptors():

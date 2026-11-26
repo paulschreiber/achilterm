@@ -241,8 +241,11 @@ Changelog
    that isn't a number; sizes are now read as decimal, so forms such as ``0x50``
    are rejected and ``0120`` means 120
 
--  Refuse terminal requests that aren't a UTF-8 form, as the page sends,
-   instead of failing with a server error
+-  Accept only URL-encoded UTF-8 forms, as the page sends, in terminal
+   requests
+
+-  Refuse unreadable or cut-off terminal requests instead of failing with a
+   server error
 
 -  Fix large input, such as a long paste, being cut off
 
