@@ -2,6 +2,7 @@
 
 import gzip
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -19,8 +20,8 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def fetch(url):
-    with urllib.request.urlopen(url, timeout=10) as response:
+def fetch(url, data=None):
+    with urllib.request.urlopen(url, data, timeout=10) as response:
         body = response.read()
         if response.headers.get("Content-Encoding") == "gzip":
             body = gzip.decompress(body)
@@ -45,7 +46,8 @@ def main():
         query = urllib.parse.urlencode(
             {"s": session, "w": 80, "h": 25, "c": 1, "k": keys}
         )
-        return fetch(f"{base}u?{query}")
+        # POST, as the browser does, so that large input fits.
+        return fetch(f"{base}u", query.encode())
 
     try:
         for attempt in range(50):
@@ -74,6 +76,20 @@ def main():
             screen = terminal("second", " ")
             assert "marker42" in screen, screen
             terminal("third")
+
+            # A large paste must arrive complete.
+            terminal(
+                "third", "stty raw -echo; echo ready; head -c $((50000*2)) | wc -c\r"
+            )
+            time.sleep(1)
+            terminal("third", "x" * 100000)
+            for attempt in range(50):
+                time.sleep(0.1)
+                screen = terminal("third", " ")
+                if "100000" in re.sub(r"<[^>]+>", "", screen):
+                    break
+            else:
+                raise AssertionError(f"large input was cut off: {screen}")
     finally:
         server.terminate()
         errors = server.communicate(timeout=10)[1].decode()

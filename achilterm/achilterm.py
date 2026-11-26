@@ -462,7 +462,8 @@ class Multiplex:
         self.thread = threading.Thread(target=self.loop)
         self.alive = 1
         # synchronize methods
-        for name in ["create", "fds", "proc_read", "proc_write", "dump", "die", "run"]:
+        names = ["create", "fds", "proc_read", "proc_write", "proc_flush", "pending"]
+        for name in [*names, "dump", "die", "run"]:
             orig = getattr(self, name)
             setattr(self, name, SynchronizedMethod(self.lock, orig))
         self.thread.start()
@@ -507,7 +508,7 @@ class Multiplex:
             self.proc[fd] = {
                 "pid": pid,
                 "term": Terminal(w, h),
-                "buf": "",
+                "input": bytearray(),
                 "time": time.time(),
             }
             return fd
@@ -547,10 +548,24 @@ class Multiplex:
             self.proc_kill(fd)
 
     def proc_write(self, fd, s):
+        if fd in self.proc:
+            self.proc[fd]["input"] += s.encode("utf-8")
+            self.proc_flush(fd)
+
+    def proc_flush(self, fd):
+        # The terminal may accept only part of a large input, such as a paste,
+        # so keep the rest until it can take more.
         try:
-            os.write(fd, s.encode("utf-8"))
-        except OSError:
+            pending = self.proc[fd]["input"]
+            if pending:
+                del pending[: os.write(fd, pending)]
+        except BlockingIOError:
+            pass
+        except (KeyError, OSError):
             self.proc_kill(fd)
+
+    def pending(self):
+        return [fd for fd, proc in self.proc.items() if proc["input"]]
 
     def dump(self, fd, color=1):
         try:
@@ -563,9 +578,11 @@ class Multiplex:
         while self.run():
             fds = self.fds()
             try:
-                i, _o, _e = select.select(fds, [], [], 1.0)
+                i, o, _e = select.select(fds, self.pending(), [], 1.0)
             except (OSError, ValueError):
                 continue
+            for fd in o:
+                self.proc_flush(fd)
             for fd in i:
                 self.proc_read(fd)
             if len(i):
