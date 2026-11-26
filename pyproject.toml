@@ -29,7 +29,7 @@ classifiers = [
     "Topic :: System :: Shells",
     "Topic :: Terminals :: Terminal Emulators/X Terminals",
 ]
-dependencies = ["webob>=1.8.9"]
+dependencies = ["webob>=1.8.11"]
 
 [dependency-groups]
 dev = ["ruff==0.17.6"]
