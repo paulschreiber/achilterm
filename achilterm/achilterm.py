@@ -564,35 +564,35 @@ class Multiplex:
         """Start a terminal and return its session ID, or None while stopping."""
         if not self.alive:
             return None
+        key = secrets.token_hex(16)
+        term = Terminal(w, h)
         # Hold signals back while forking, so that the child handles none as this
         # process, or one that includes this application, would.
         mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])  # what's blocked now
-        pid = None
         try:
-            # Blocking can run a waiting handler, which may raise: restore if so.
-            signal.pthread_sigmask(signal.SIG_BLOCK, signal.valid_signals())
-            pid, fd = pty.fork()
-            if pid == 0:
-                self.exec_command(w, h)  # never returns
-            # Record the session while signals are still held back, so that its
-            # process is cleaned up whatever happens next.
-            key = secrets.token_hex(16)
-            self.proc[key] = {
-                "fd": fd,
-                "pid": pid,
-                "term": Terminal(w, h),
-                "input": bytearray(),
-                # when the browser last asked for the screen, and how often
-                "seen": time.monotonic(),
-                "shown": 0,
-            }
-        finally:
-            if pid != 0:
+            try:
+                # Blocking can run a waiting handler, which may raise.
+                signal.pthread_sigmask(signal.SIG_BLOCK, signal.valid_signals())
+                pid, fd = pty.fork()
+                if pid == 0:
+                    self.exec_command(w, h)  # never returns
+                # Record the session first, so that its process gets cleaned up.
+                self.proc[key] = {
+                    "fd": fd,
+                    "pid": pid,
+                    "term": term,
+                    "input": bytearray(),
+                    # when the browser last asked for the screen, and how often
+                    "seen": time.monotonic(),
+                    "shown": 0,
+                }
+                fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
+                fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", h, w, 0, 0))
+            finally:
                 signal.pthread_sigmask(signal.SIG_SETMASK, mask)
-        try:
-            fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", h, w, 0, 0))
         except BaseException:
+            # Whether setting up failed, or a handler raised when signals were let
+            # through again, don't keep a terminal that nobody was given.
             self.proc_close(key)
             raise
         return key
@@ -637,8 +637,9 @@ class Multiplex:
             env["PATH"] = os.environ.get("PATH", os.defpath)
             name = cmd[0]
             os.execvpe(cmd[0], cmd, env)
-        except (OSError, ValueError) as error:
-            message = f"achilterm: couldn't start {name}: {error}\r\n"
+        except BaseException as error:  # noqa: BLE001 (say why, whatever it is)
+            reason = str(error) or type(error).__name__
+            message = f"achilterm: couldn't start {name}: {reason}\r\n"
             os.write(2, message.encode(errors="replace"))
         finally:
             # This process is a copy of the server, and mustn't carry on as one.

@@ -516,36 +516,42 @@ def check_end_of_output():
 
 def check_failed_start():
     """A command that can't be started says so, and leaves nothing running."""
-    server = os.getpid()
-    failure = FileNotFoundError(2, "No such file or directory")
+    # an expected kind of error, and any other
+    check_failed_exec(FileNotFoundError(2, "No such file or directory"), "No such")
+    check_failed_exec(AttributeError(), "AttributeError")
+
+    # A terminal that can't be set up is closed again.
+    failure = OSError("deliberate failure")
+    with running_app("sleep 30") as app:
+        with (
+            mock.patch("fcntl.ioctl", side_effect=failure),
+            unittest.TestCase().assertRaisesRegex(OSError, "deliberate"),
+        ):
+            app.multi.create()
+        assert not app.multi.proc, app.multi.proc
+        assert wait_until(lambda: not app.multi.ending), app.multi.ending
+
+
+def check_failed_exec(failure, reason):
+    server_pid = os.getpid()
     with running_app("true") as app:
         with mock.patch("os.execvpe", side_effect=failure), app.multi.lock:
             session = new_app_session(app)
             # The new process must never get back here.
-            assert os.getpid() == server
+            assert os.getpid() == server_pid
             term = app.multi.proc[session]["term"]
         assert wait_until(lambda: session not in app.multi.proc), "stayed open"
         text = screen_text(term.dumphtml())
-        assert "couldn't start /bin/sh: " in text, text
-        assert "No such file or directory" in text, text
+        message = text.partition("couldn't start /bin/sh: ")[2]
+        assert reason in message, text.strip()
 
-    # Without PATH, commands are still found.
+
+def check_without_path():
+    """Commands are found even when PATH isn't set."""
     with mock.patch.dict(os.environ), running_app("echo found; sleep 30") as app:
         del os.environ["PATH"]
         send = functools.partial(app_screen, app, new_app_session(app))
         wait_for_screen(send, "", "found")
-
-    # A terminal that can't be set up is closed again.
-    with running_app("sleep 30") as app:
-        with mock.patch("fcntl.ioctl", side_effect=OSError("deliberate failure")):
-            try:
-                app.multi.create()
-            except OSError:
-                pass
-            else:
-                raise AssertionError("the failure was ignored")
-        assert not app.multi.proc, app.multi.proc
-        assert wait_until(lambda: not app.multi.ending), app.multi.ending
 
 
 def check_many_descriptors():
@@ -599,9 +605,19 @@ def main():
         return wait_for_screen(send, keys, pattern)
 
     def end_shell(name):
-        # The shell may end before the reply is made, which then says so.
-        query = terminal_query(sessions[name], "\x15exit\r")
-        assert status(f"{base}u", query) in (200, 410), name
+        """End a terminal's shell, and wait until its page is told."""
+        keys = "\x15exit\r"
+        for attempt in range(50):
+            try:
+                terminal(name, keys)
+            except urllib.error.HTTPError as error:
+                text = error.read().decode()
+                # told that it ended, not that something went wrong with it
+                assert error.code == 410 and "has ended. Reload" in text, text
+                return
+            keys = ""
+            time.sleep(0.1)
+        raise AssertionError(f"{name} didn't end")
 
     try:
         index = fetch(base)
@@ -617,7 +633,6 @@ def main():
         # descriptor.
         terminal("stale")
         end_shell("stale")
-        time.sleep(1)
         terminal("newer")
         expect("newer", "echo private$((20+1))\r", "private21")
         query = terminal_query(sessions["stale"], "\x15echo intruder$((30+1))\r")
@@ -635,8 +650,6 @@ def main():
 
             # Ending one session must leave the others working.
             end_shell("first")
-            time.sleep(1)
-            assert status(f"{base}u", terminal_query(sessions["first"])) == 410
             expect("second", "echo marker$((40+2))\r", "marker42")
             terminal("third")
 
@@ -695,6 +708,7 @@ def main():
     check_stop(signal.SIGTERM, "HUP TERM")
     check_end_of_output()
     check_failed_start()
+    check_without_path()
     check_many_descriptors()
     print("smoke test passed")
 
