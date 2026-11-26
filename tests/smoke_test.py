@@ -90,6 +90,21 @@ def main():
         else:
             raise AssertionError("a GET request was accepted")
 
+        # A tab whose shell has ended must never reach a newer terminal. This
+        # runs first, while the next terminal would reuse the ended one's file
+        # descriptor.
+        terminal("stale")
+        terminal("stale", "exit\r")
+        time.sleep(1)
+        terminal("newer")
+        expect("newer", "echo private$((20+1))\r", "private21")
+        screen = terminal("stale", "\x15echo intruder$((30+1))\r")
+        assert "private21" not in screen_text(screen), screen_text(screen)
+        time.sleep(1)
+        screen = terminal("newer", " ")
+        assert "intruder31" not in screen_text(screen), screen_text(screen)
+        terminal("newer", "\x15exit\r")
+
         # An idle connection must not block other requests.
         with socket.create_connection(("127.0.0.1", port)):
             terminal("first")

@@ -29,6 +29,7 @@ import fcntl
 import glob
 import gzip
 import html
+import itertools
 import mimetypes
 import optparse
 import os
@@ -479,7 +480,10 @@ class Multiplex:
     def __init__(self, cmd=None):
         # signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         self.cmd = cmd
+        # Sessions are keyed by a number that is never reused. File descriptors
+        # are, so one must not identify a session beyond its lifetime.
         self.proc = {}
+        self.keys = itertools.count(1)
         self.lock = threading.RLock()
         self.thread = threading.Thread(target=self.loop)
         self.alive = 1
@@ -536,13 +540,15 @@ class Multiplex:
         else:
             fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", h, w, 0, 0))
-            self.proc[fd] = {
+            key = next(self.keys)
+            self.proc[key] = {
+                "fd": fd,
                 "pid": pid,
                 "term": Terminal(w, h),
                 "input": bytearray(),
                 "time": time.time(),
             }
-            return fd
+            return key
 
     def die(self):
         self.alive = 0
@@ -551,79 +557,84 @@ class Multiplex:
         return self.alive
 
     def fds(self):
-        return list(self.proc)
+        """Map each session's file descriptor to its key."""
+        return {proc["fd"]: key for key, proc in self.proc.items()}
 
-    def proc_kill(self, fd):
-        if fd in self.proc:
-            self.proc[fd]["time"] = 0
+    def proc_close(self, key):
+        proc = self.proc.pop(key)
+        try:
+            os.close(proc["fd"])
+            os.kill(proc["pid"], signal.SIGTERM)
+        except OSError:
+            pass
+
+    def proc_kill(self, key):
+        if key in self.proc:
+            self.proc[key]["time"] = 0
         t = time.time()
         for i in list(self.proc):
             t0 = self.proc[i]["time"]
             if (t - t0) > 120:
-                try:
-                    os.close(i)
-                    os.kill(self.proc[i]["pid"], signal.SIGTERM)
-                except OSError:
-                    pass
-                del self.proc[i]
+                self.proc_close(i)
 
-    def proc_read(self, fd):
+    def proc_read(self, key):
         try:
-            t = self.proc[fd]["term"]
-            t.write(os.read(fd, 65536))
+            proc = self.proc[key]
+            t = proc["term"]
+            t.write(os.read(proc["fd"], 65536))
             reply = t.read()
-            self.proc[fd]["time"] = time.time()
+            proc["time"] = time.time()
             if reply:
-                self.proc_write(fd, reply)
+                self.proc_write(key, reply)
         except (KeyError, OSError):
-            self.proc_kill(fd)
+            self.proc_kill(key)
 
-    def proc_write(self, fd, s):
-        if fd in self.proc:
-            self.proc[fd]["input"] += s.encode("utf-8")
-            self.proc_flush(fd)
+    def proc_write(self, key, s):
+        if key in self.proc:
+            self.proc[key]["input"] += s.encode("utf-8")
+            self.proc_flush(key)
 
-    def proc_flush(self, fd):
+    def proc_flush(self, key):
         # The terminal may accept only part of a large input, such as a paste,
         # so keep the rest until it can take more.
         try:
-            pending = self.proc[fd]["input"]
-            if pending:
-                del pending[: os.write(fd, pending)]
+            proc = self.proc[key]
+            if proc["input"]:
+                del proc["input"][: os.write(proc["fd"], proc["input"])]
         except BlockingIOError:
             pass
         except (KeyError, OSError):
-            self.proc_kill(fd)
+            self.proc_kill(key)
 
     def pending(self):
-        return [fd for fd, proc in self.proc.items() if proc["input"]]
+        """Like fds(), for sessions with input still to be written."""
+        return {proc["fd"]: key for key, proc in self.proc.items() if proc["input"]}
 
-    def dump(self, fd, color=1):
+    def dump(self, key, color=1):
         try:
-            self.proc[fd]["time"] = time.time()
-            return self.proc[fd]["term"].dumphtml(color)
+            self.proc[key]["time"] = time.time()
+            return self.proc[key]["term"].dumphtml(color)
         except KeyError:
             return False
 
     def loop(self):
         while self.run():
-            fds = self.fds()
+            reading = self.fds()
+            writing = self.pending()
             try:
-                i, o, _e = select.select(fds, self.pending(), [], 1.0)
+                i, o, _e = select.select(list(reading), list(writing), [], 1.0)
             except (OSError, ValueError):
                 continue
+            # A session may have ended while waiting. Its key no longer matches
+            # anything, even if a new session has its file descriptor.
             for fd in o:
-                self.proc_flush(fd)
+                self.proc_flush(writing[fd])
             for fd in i:
-                self.proc_read(fd)
+                self.proc_read(reading[fd])
             if len(i):
                 time.sleep(0.002)
-        for i in list(self.proc):
-            try:
-                os.close(i)
-                os.kill(self.proc[i]["pid"], signal.SIGTERM)
-            except OSError:
-                pass
+        for key in list(self.proc):
+            self.proc_close(key)
 
 
 class AchilTerm:
@@ -682,7 +693,7 @@ class AchilTerm:
                 zbuf = zbuf.getvalue()
                 res.write(zbuf)
             else:
-                del self.session[s]
+                self.session.pop(s, None)
                 res.write('<?xml version="1.0"?><idem></idem>')
         # 			print "sessions %r"%self.session
         else:
