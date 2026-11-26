@@ -33,16 +33,19 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			r.setRequestHeader('X-Achilterm','1');
 			r.onreadystatechange = function () {
 				if (r.readyState==4) {
-					var session=r.getResponseHeader('X-Achilterm-Session') || params.get('s');
+					var session=r.getResponseHeader('X-Achilterm-Session');
+					var screen=r.status==200 && r.responseXML;
 					// A screen that starts a session but doesn't name it can't be used,
 					// and asking again would start another terminal each time.
-					var unnamed=r.status==200 && r.responseXML && !session;
-					if(r.status==200 && r.responseXML && session) {
+					var unnamed=screen && !session && !params.get('s');
+					// Keep a new session's ID even if its screen can't be used.
+					if(r.status==200 && session)
+						params.set('s',session);
+					if(screen && session) {
 						if(retrying) {
 							retrying=false;
 							document.title='Achilterm';
 						}
-						params.set('s',session);
 						var de=r.responseXML.documentElement;
 						if(de.tagName=="pre") {
                     					dterm.innerHTML = r.responseText;

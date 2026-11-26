@@ -291,11 +291,18 @@ def check_unused():
     with running_app("sleep 60") as app:
         unused, used = new_app_session(app), new_app_session(app)
         assert post(app, used).status_code == 200
-        with app.multi.lock:
+
+        def age(seconds):
             for proc in app.multi.proc.values():
-                proc["seen"] -= MINIMUM_TIMEOUT + 1
+                proc["seen"] -= seconds
             app.multi.expire()
-            assert list(app.multi.proc) == [used], (unused, used)
+
+        with app.multi.lock:
+            # A slowed page may take this long to ask again.
+            age(MINIMUM_TIMEOUT - 1)
+            assert list(app.multi.proc) == [unused, used]
+            age(2)
+            assert list(app.multi.proc) == [used]
 
 
 def check_output_fault():
