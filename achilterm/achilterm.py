@@ -672,6 +672,7 @@ class Multiplex:
             if keep_screen:
                 # Wait for its page as long as before, counting from now.
                 proc.update(seen=time.monotonic(), sent=False)
+                proc["input"].clear()  # what the command never read
                 self.last_screens[key] = proc
             with contextlib.suppress(OSError):
                 os.close(proc["fd"])

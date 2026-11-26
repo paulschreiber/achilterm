@@ -569,21 +569,42 @@ def check_last_output():
         def about(limit, session):
             return limit - 10 < time_left(session) <= limit
 
+        def age(sessions, seconds):
+            sessions[session]["seen"] -= seconds
+
+        def expired(session):
+            with app.multi.lock:
+                app.multi.expire()
+                return session not in app.multi.last_screens
+
+        # A page that has asked once, and doesn't come back, is soon given up on.
         session = end_command(app)
         assert about(MINIMUM_TIMEOUT, session), time_left(session)
-        # Asking a second time shows that the page got its ID.
+        age(app.multi.last_screens, MINIMUM_TIMEOUT + 1)
+        assert expired(session)
+        assert post(app, session).status_code == 410
+
+        # Asking again, here after the end, shows that the page got its ID.
+        session = end_command(app)
         post(app, session)
         assert about(DEFAULT_TIMEOUT, session), time_left(session)
-        app.multi.last_screens[session]["seen"] -= DEFAULT_TIMEOUT - 1
+        age(app.multi.last_screens, DEFAULT_TIMEOUT - 1)
         assert post(app, session, f=1).status_code == 200
         assert about(DEFAULT_TIMEOUT, session), time_left(session)
+        age(app.multi.last_screens, DEFAULT_TIMEOUT + 1)
+        assert expired(session)
 
-        # A screen that no page asks for isn't kept for ever.
+        # The wait starts when the command ends, however long ago the page asked,
+        # and input the command never read is dropped.
+        session = new_app_session(app)
+        post(app, session)
         with app.multi.lock:
-            app.multi.last_screens[session]["seen"] -= DEFAULT_TIMEOUT + 1
-            app.multi.expire()
-            assert session not in app.multi.last_screens
-        assert post(app, session).status_code == 410
+            age(app.multi.proc, DEFAULT_TIMEOUT - 5)
+            app.multi.proc[session]["input"] += b"never read"
+            with mock.patch("os.read", return_value=b""):
+                app.multi.proc_read(session)
+        assert about(DEFAULT_TIMEOUT, session), time_left(session)
+        assert not app.multi.last_screens[session]["input"]
 
         # If it can't be drawn, the page is told why the session ended.
         session = end_command(app)
