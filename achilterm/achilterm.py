@@ -538,6 +538,9 @@ class Multiplex:
         self.proc = {}
         # why a session was closed, by key, when there is a reason to give
         self.close_reasons = {}
+        # the screens of commands that have ended, by key, until their pages ask
+        # for them, each with the time to give up waiting
+        self.last_screens = {}
         # when to kill each closed session's process group, until nothing is left
         self.ending = {}
         self.lock = threading.RLock()
@@ -711,6 +714,9 @@ class Multiplex:
                 timeout = min(timeout, MINIMUM_TIMEOUT)
             if proc["seen"] < now - timeout:
                 self.proc_close(key, "because the page was disconnected")
+        for key, (_term, deadline) in list(self.last_screens.items()):
+            if now > deadline:
+                del self.last_screens[key]
 
     def proc_read(self, key):
         try:
@@ -722,8 +728,13 @@ class Multiplex:
             data = b""
         if not data:
             # The command has ended. Reading then fails on Linux, but on macOS and
-            # BSD every read returns nothing.
-            self.proc_close(key)
+            # BSD every read returns nothing. Its page may not have seen the last
+            # of its output yet, so keep the screen, as long as a slowed page may
+            # take to ask.
+            if key in self.proc:
+                deadline = time.monotonic() + MINIMUM_TIMEOUT
+                self.last_screens[key] = (self.proc[key]["term"], deadline)
+                self.proc_close(key)
             return
         try:
             term = proc["term"]
@@ -744,23 +755,29 @@ class Multiplex:
     def proc_flush(self, key):
         # The terminal may accept only part of a large input, such as a paste,
         # so keep the rest until it can take more.
-        try:
-            proc = self.proc[key]
-            if proc["input"]:
+        proc = self.proc.get(key)
+        if proc and proc["input"]:
+            try:
                 del proc["input"][: os.write(proc["fd"], proc["input"])]
-        except BlockingIOError:
-            pass
-        except (KeyError, OSError):
-            self.proc_close(key)
+            except BlockingIOError:
+                pass
+            except OSError:
+                # The command has probably ended. Leave closing to proc_read,
+                # which first reads the rest of its output.
+                proc["input"].clear()
 
     def dump(self, key, color=1, full=False):
+        """The screen to send a session's page, or False if it has ended."""
         proc = self.proc.get(key)
-        if proc is None:
-            return False
-        proc["seen"] = time.monotonic()
-        proc["shown"] += 1
-        try:
+        if proc:
+            proc["seen"] = time.monotonic()
+            proc["shown"] += 1
             term = proc["term"]
+        elif key in self.last_screens:
+            term = self.last_screens.pop(key)[0]  # sent only once
+        else:
+            return False
+        try:
             if full:
                 term.last_html = ""  # send the screen even if it hasn't changed
             return term.dumphtml(color)

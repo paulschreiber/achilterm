@@ -511,7 +511,49 @@ def check_end_of_output():
             with mock.patch("os.read", return_value=b""):
                 app.multi.proc_read(session)
             assert session not in app.multi.proc, "the terminal stayed open"
+        screens_until_ended(app, session)
+
+
+def screens_until_ended(app, session):
+    """The screens a page receives until it's told that its session ended."""
+    screens = []
+    for attempt in range(50):
+        response = post(app, session)
+        if response.status_code == 410:
+            return screens
+        assert response.status_code == 200, response.status
+        response.decode_content()
+        if "<pre" in response.text:
+            screens.append(screen_text(response.text))
+        time.sleep(0.1)
+    raise AssertionError("the session didn't end")
+
+
+def check_last_output():
+    """A page receives what a command printed last, then hears that it ended."""
+    with running_app("read x; echo last words") as app:
+        session = new_app_session(app)
+        app.multi.proc_write(session, "\r")
+        assert wait_until(lambda: session not in app.multi.proc), "stayed open"
+        screens = screens_until_ended(app, session)
+        assert len(screens) == 1 and "last words" in screens[0], screens
+
+        # A screen that no page asks for isn't kept for long.
+        with mock.patch("achilterm.achilterm.MINIMUM_TIMEOUT", 0.2):
+            session = new_app_session(app)
+            app.multi.proc_write(session, "\r")
+            assert wait_until(
+                lambda: session not in app.multi.proc | app.multi.last_screens
+            ), "kept"
         assert post(app, session).status_code == 410
+
+    # Failing to send input doesn't lose the output still to be read.
+    with running_app("sleep 30") as app:
+        session = new_app_session(app)
+        with app.multi.lock, mock.patch("os.write", side_effect=OSError):
+            app.multi.proc_write(session, "x")
+            assert session in app.multi.proc, "closed before its output was read"
+            assert not app.multi.proc[session]["input"]
 
 
 def check_failed_start():
@@ -561,9 +603,7 @@ def check_failed_exec(failure, reason):
             session = new_app_session(app)
             # The new process must never get back here.
             assert os.getpid() == server_pid
-            term = app.multi.proc[session]["term"]
-        assert wait_until(lambda: session not in app.multi.proc), "stayed open"
-        text = screen_text(term.dumphtml())
+        text = "".join(screens_until_ended(app, session))
         message = text.partition("couldn't start /bin/sh: ")[2]
         assert reason in message, text.strip()
 
@@ -730,6 +770,7 @@ def main():
     # Only killing ends this command, which takes the server several seconds.
     check_stop(signal.SIGTERM, "HUP TERM")
     check_end_of_output()
+    check_last_output()
     check_failed_start()
     check_without_path()
     check_many_descriptors()
