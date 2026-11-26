@@ -1,5 +1,7 @@
 """Start the installed achilterm command and exercise it over HTTP."""
 
+import contextlib
+import functools
 import gzip
 import hashlib
 import os
@@ -223,10 +225,31 @@ def post(app, name, keys=""):
     return request.get_response(app)
 
 
+@contextlib.contextmanager
+def running_app(*args, **options):
+    app = AchilTerm(*args, **options)
+    try:
+        yield app
+    finally:
+        app.multi.die()
+        app.multi.thread.join(10)
+
+
+def wait_for_screen(send, keys, pattern):
+    """Send keys, then wait until the screen matches the pattern."""
+    for attempt in range(50):
+        # A response only holds the screen when it has changed, so check every
+        # one, including the response to the keys.
+        screen = send(keys if attempt == 0 else "")
+        if "<pre" in screen and re.search(pattern, screen_text(screen)):
+            return screen
+        time.sleep(0.1)
+    raise AssertionError(f"{pattern!r} never appeared: {screen}")
+
+
 def check_expiry():
     # Runs the application here, to use a timeout shorter than the command allows.
-    app = AchilTerm("while :; do echo busy; sleep 1; done", timeout=2)
-    try:
+    with running_app("while :; do echo busy; sleep 1; done", timeout=2) as app:
         pids = {}
         for name in ("shown", "left"):
             assert post(app, name).status_code == 200
@@ -248,19 +271,15 @@ def check_expiry():
             assert response.status_code == 410, response.status
             assert "disconnected. Reload" in response.text, response.text
         assert len(app.multi.proc) == 1, app.multi.proc
-    finally:
-        app.multi.die()
-        app.multi.thread.join(10)
 
 
 def check_output_fault():
     """If one terminal's output can't be handled, only that one is closed."""
-    app = AchilTerm("while :; do echo busy; sleep 1; done")
 
     def fail(*args):
         raise RuntimeError("deliberate failure for this test")
 
-    try:
+    with running_app("while :; do echo busy; sleep 1; done") as app:
         assert post(app, "other").status_code == 200
         # reading the output, then drawing the screen
         for method in ("write", "dumphtml"):
@@ -280,36 +299,30 @@ def check_output_fault():
             assert errors == [RuntimeError], errors
         assert post(app, "other").status_code == 200
         assert app.multi.thread.is_alive()
-    finally:
-        app.multi.die()
-        app.multi.thread.join(10)
 
 
 def check_many_descriptors():
     """Terminals must work when their descriptors are numbered 1024 or higher."""
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, min(2048, hard)), hard))
+    wanted = 2048 if hard == resource.RLIM_INFINITY else min(2048, hard)
+    if wanted < 1100:
+        print(f"skipping the descriptor check: the open file limit is {hard}")
+        return
+    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, wanted), hard))
     filler = [os.open(os.devnull, os.O_RDONLY)]
-    app = None
     try:
         while filler[-1] < 1024:
             filler.append(os.open(os.devnull, os.O_RDONLY))
-        app = AchilTerm('read line; echo "got $line"; sleep 30')
-        text = ""
-        for attempt in range(50):
-            response = post(app, "high", "input\r" if attempt == 0 else "")
-            response.decode_content()
-            if "<pre" in response.text:
-                text = screen_text(response.text)
-            if "got input" in text:
-                break
-            time.sleep(0.1)
-        assert "got input" in text, text
-        assert min(app.multi.proc[key]["fd"] for key in app.multi.proc) >= 1024
+        with running_app('read line; echo "got $line"; sleep 30') as app:
+
+            def send(keys):
+                response = post(app, "high", keys)
+                response.decode_content()
+                return response.text
+
+            wait_for_screen(send, "input\r", "got input")
+            assert min(proc["fd"] for proc in app.multi.proc.values()) >= 1024
     finally:
-        if app:
-            app.multi.die()
-            app.multi.thread.join(10)
         for fd in filler:
             os.close(fd)
         resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
@@ -335,15 +348,8 @@ def main():
         return response
 
     def expect(session, keys, pattern):
-        """Send keys, then wait until the screen matches the pattern."""
-        for attempt in range(50):
-            # A response only holds the screen when it has changed, so check
-            # every one, including the response to the keys.
-            screen = terminal(session, keys if attempt == 0 else "")
-            if re.search(pattern, screen_text(screen)):
-                return screen
-            time.sleep(0.1)
-        raise AssertionError(f"{pattern!r} never appeared: {screen}")
+        send = functools.partial(terminal, session)
+        return wait_for_screen(send, keys, pattern)
 
     try:
         index = fetch(base)

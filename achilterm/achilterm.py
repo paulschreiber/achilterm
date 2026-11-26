@@ -564,15 +564,10 @@ class Multiplex:
         if pid == 0:
             # The command mustn't inherit other terminals or connections.
             try:
-                fdl = [int(i) for i in os.listdir("/proc/self/fd")]
+                end = max(map(int, os.listdir("/proc/self/fd"))) + 1
             except OSError:
-                os.closerange(3, os.sysconf("SC_OPEN_MAX"))
-                fdl = []
-            for i in [i for i in fdl if i > 2]:
-                try:
-                    os.close(i)
-                except OSError:
-                    pass
+                end = os.sysconf("SC_OPEN_MAX")
+            os.closerange(3, end)
             if self.cmd:
                 cmd = ["/bin/sh", "-c", self.cmd]
             elif os.getuid() == 0:
@@ -696,9 +691,15 @@ class Multiplex:
         while self.run():
             self.expire()
             # Unlike select(), poll() works with any number of descriptors.
-            with selectors.PollSelector() as selector:
-                self.watch(selector)
-                ready = selector.select(1.0)
+            try:
+                with selectors.PollSelector() as selector:
+                    self.watch(selector)
+                    ready = selector.select(1.0)
+            except OSError:
+                # Keep trying: if this thread ended, every terminal would freeze.
+                logger.exception("Couldn't wait for terminal output")
+                time.sleep(1)
+                continue
             # A session may have ended while waiting. Its key no longer matches
             # anything, even if a new session has its file descriptor.
             for item, events in ready:
