@@ -130,12 +130,8 @@ Commandline usage
       -p PORT, --port=PORT       set the TCP port (default: 8022)
       -c CMD, --command=CMD      set the command (default: /bin/login or ssh localhost)
       -l, --log                  log requests to stderr (default: quiet mode)
-      -d, --daemon               run as daemon in the background
-      -P PIDFILE, --pidfile=PIDFILE
-                                 set the pidfile (default: /var/run/achilterm.pid)
       -i INDEX_FILE, --index=INDEX_FILE
                                  default index file (default: achilterm.html)
-      -u UID, --uid=UID          set the daemon's user id
       -w WIDTH, --width=WIDTH    set the width (default: 80)
       -H HEIGHT, --height=HEIGHT set the height (default: 25)
       --timeout=TIMEOUT          close a terminal not shown by a browser for this
@@ -197,6 +193,10 @@ Changelog
 ### 0.30 (November 2026)
 
 -  Publish as ``achilterm-ng``
+
+-  Remove daemon mode and its ``-d``/``--daemon``, ``-P``/``--pidfile`` and
+   ``-u``/``--uid`` options; run Achilterm under a service manager such as
+   systemd, which also chooses the user it runs as
 
 -  Remove Achiltermlite, the stripped-down page, and its ``-L``/``--lite``
    option; a custom ``--index`` page based on it must use ``achilterm.js`` and

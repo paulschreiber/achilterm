@@ -31,21 +31,10 @@ ssh localhost).
 \fB\-l\fR, \fB\-\-log\fR
 Log requests to standard error (default: quiet).
 .TP
-\fB\-d\fR, \fB\-\-daemon\fR
-Run as a daemon in the background.
-.TP
-\fB\-P\fR \fIPIDFILE\fR, \fB\-\-pidfile\fR=\fIPIDFILE\fR
-With \fB\-\-daemon\fR, write the daemon's process ID to this file (default:
-/var/run/achilterm.pid). A failure to write it is ignored.
-.TP
 \fB\-i\fR \fIINDEX_FILE\fR, \fB\-\-index\fR=\fIINDEX_FILE\fR
 Serve this file as the main page in place of the bundled achilterm.html. In
 it, %(width)s and %(height)s are replaced by the terminal size, and a literal
 percent sign must be written as %%.
-.TP
-\fB\-u\fR \fIUID\fR, \fB\-\-uid\fR=\fIUID\fR
-With \fB\-\-daemon\fR, when run as root, switch to this user name or numeric
-user ID. Only the user ID changes; group IDs stay as they are.
 .TP
 \fB\-w\fR \fIWIDTH\fR, \fB\-\-width\fR=\fIWIDTH\fR
 Set the terminal width (default: 80).
