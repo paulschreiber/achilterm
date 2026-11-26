@@ -33,7 +33,10 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			r.setRequestHeader('X-Achilterm','1');
 			r.onreadystatechange = function () {
 				if (r.readyState==4) {
-					var session=r.getResponseHeader('X-Achilterm-Session');
+					var session=r.getResponseHeader('X-Achilterm-Session') || params.get('s');
+					// A screen that starts a session but doesn't name it can't be used,
+					// and asking again would start another terminal each time.
+					var unnamed=r.status==200 && r.responseXML && !session;
 					if(r.status==200 && r.responseXML && session) {
 						if(retrying) {
 							retrying=false;
@@ -51,21 +54,24 @@ achilterm.Terminal_ctor=function(id,width,height) {
 						}
 						sending=0;
 						timeout=window.setTimeout(update,rmax);
-					} else if([0,200,408,429].includes(r.status) || r.status>=500) {
+					} else if(!unnamed && ([0,200,408,429].includes(r.status) || r.status>=500)) {
 						// The server or the connection may only be away briefly. Sending
 						// part of what was typed could run the wrong command, so drop it.
 						retrying=true;
 						keybuf='';
 						sending=0;
 						document.title='Achilterm (reconnecting, typing is ignored)';
-						timeout=window.setTimeout(update,2000);
+						// Without a session, each request starts a terminal: ask less often.
+						timeout=window.setTimeout(update,params.get('s') ? 2000 : 10000);
 					} else {
 						// The server refused this page, and would again.
 						refused=true;
 						// Say why below the screen, which stays readable.
 						var notice=document.createElement('p');
-						notice.textContent=r.responseText || `Connection error status:${r.status}`;
+						notice.textContent=unnamed ? 'The reply had no session ID. Check that no proxy removes it.'
+							: r.responseText || `Connection error status:${r.status}`;
 						div.appendChild(notice);
+						document.title='Achilterm';
 					}
 				}
 			}
