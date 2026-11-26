@@ -4,14 +4,14 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	var sid=Array.from(crypto.getRandomValues(new Uint8Array(16)), function(byte) {
 		return byte.toString(16).padStart(2,'0');
 	}).join('');
-	var query0="s="+sid+"&w="+width+"&h="+height;
-	var query1=query0+"&c=1&k=";
+	// The fields sent with every request. c asks for colors, and i names the run
+	// of the server this page is talking to.
+	var params=new URLSearchParams({s: sid, w: width, h: height, c: 1, i: ''});
 	var timeout;
 	var error_timeout;
-	var keybuf=[];
+	// typed or pasted, and not yet sent
+	var keybuf='';
 	var sending=0;
-	// which run of the server this page is talking to
-	var server='';
 	var retrying=false;
 	var rmax=1;
 
@@ -28,21 +28,21 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	}
 	function error() {
 		sled.className='off';
-		debug("Connection lost timeout ts:"+((new Date).getTime()));
+		debug(`Connection lost timeout ts:${(new Date).getTime()}`);
 	}
 	function opt_add(opt,name) {
 		opt.className='off';
-		opt.innerHTML=' '+name+' ';
+		opt.innerHTML=` ${name} `;
 		dstat.appendChild(opt);
 		dstat.appendChild(document.createTextNode(' '));
 	}
 	function do_color(event) {
 		var o=opt_color.className=(opt_color.className=='off')?'on':'off';
 		if(o=='on')
-			query1=query0+"&c=1&k=";
+			params.set('c',1);
 		else
-			query1=query0+"&k=";
-		debug('Color '+opt_color.className);
+			params.delete('c');
+		debug(`Color ${opt_color.className}`);
 	}
 	function do_paste(event) {
 		// Browsers only offer the clipboard to pages served over HTTPS or from localhost.
@@ -53,7 +53,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		navigator.clipboard.readText().then(function(text) {
 			if (text) {
 				// Send line breaks as the Enter key does.
-				queue(encodeURIComponent(text.replace(/\r?\n/g, '\r')));
+				queue(text.replace(/\r?\n/g, '\r'));
 				debug('Pasted');
 			}
 		}, function() {
@@ -66,13 +66,9 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			sending=1;
 			sled.className='on';
 			var r=new XMLHttpRequest();
-			var send="";
-			while(keybuf.length>0) {
-				send+=keybuf.pop();
-			}
-			var query='i='+server+'&'+query1+send;
+			params.set('k',keybuf);
+			keybuf='';
 			r.open("POST","u",true);
-			r.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
 			// Shows the server that this request comes from its own page.
 			r.setRequestHeader('X-Achilterm','1');
 			r.onreadystatechange = function () {
@@ -84,7 +80,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 							retrying=false;
 							debug('');
 						}
-						server=r.getResponseHeader('X-Achilterm-Instance') || '';
+						params.set('i',r.getResponseHeader('X-Achilterm-Instance') || '');
 						var de=r.responseXML.documentElement;
 						if(de.tagName=="pre") {
                     					dterm.innerHTML = r.responseText;
@@ -102,21 +98,21 @@ achilterm.Terminal_ctor=function(id,width,height) {
 						retrying=true;
 						sending=0;
 						sled.className='off';
-						debug("Connection lost, retrying. Status:"+r.status);
+						debug(`Connection lost, retrying. Status:${r.status}`);
 						timeout=window.setTimeout(update,2000);
 					} else {
 						// The server refused this page, and would again.
 						sled.className='off';
-						sdebug.textContent=r.responseText || "Connection error status:"+r.status;
+						sdebug.textContent=r.responseText || `Connection error status:${r.status}`;
 					}
 				}
 			}
 			error_timeout=window.setTimeout(error,5000);
-			r.send(query);
+			r.send(params);
 		}
 	}
 	function queue(s) {
-		keybuf.unshift(s);
+		keybuf+=s;
 		if(sending==0) {
 			window.clearTimeout(timeout);
 			timeout=window.setTimeout(update,1);
@@ -149,7 +145,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	function send_key(ev,k) {
 		ev.preventDefault();
 		ev.stopPropagation();
-		queue(encodeURIComponent(k));
+		queue(k);
 	}
 	// Special keys and Ctrl or Alt combinations. Anything not sent here is left
 	// to the browser, and characters then arrive as keypress events.
@@ -166,7 +162,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 				k=String.fromCharCode(control_keys[ev.key]);
 		} else if(ev.altKey) {
 			if(letter(ev))
-				k='\x1b'+letter(ev);
+				k=`\x1b${letter(ev)}`;
 		} else if(special_keys.hasOwnProperty(ev.key)) {
 			k=special_keys[ev.key];
 		}
