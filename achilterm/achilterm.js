@@ -180,6 +180,11 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		// A refused page leaves every key to the browser, so it can be reloaded.
 		if(refused || ev.metaKey || ev.isComposing || is_altgr(ev))
 			return;
+		// While reconnecting, typing is ignored, so leave Ctrl-Shift-R to reload the
+		// page. F5 and Ctrl-R stay: pressed from habit, they would lose a terminal
+		// that may yet come back.
+		if(retrying && ev.ctrlKey && ev.shiftKey && !ev.altKey && letter(ev)=='r')
+			return;
 		var k;
 		if(ev.ctrlKey && ev.altKey) {
 			return;
