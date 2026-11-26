@@ -64,6 +64,9 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			sled.className='on';
 			var r=new XMLHttpRequest();
 			params.set('k',keybuf);
+			// Output usually follows input shortly, so ask again soon after sending it.
+			if(keybuf)
+				rmax=50;
 			keybuf='';
 			// After a lost response, ask for the whole screen again.
 			if(retrying)
@@ -103,7 +106,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 								rmax=2000;
 						}
 						sending=0;
-						timeout=window.setTimeout(update,rmax);
+						// Anything typed while waiting for this reply goes at once.
+						timeout=window.setTimeout(update,keybuf ? 1 : rmax);
 					} else if(!unnamed && ([0,200,408,429].includes(r.status) || r.status>=500)) {
 						// The server or the connection may only be away briefly. Sending
 						// part of what was typed could run the wrong command, so drop it.
