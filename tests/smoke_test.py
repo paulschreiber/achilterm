@@ -96,6 +96,19 @@ def is_running(pid):
         return False
 
 
+def buffered_environment():
+    """This process's environment, leaving Python's output buffered as usual."""
+    return {
+        name: value for name, value in os.environ.items() if name != "PYTHONUNBUFFERED"
+    }
+
+
+def announced_address(server):
+    """The line a server writes as soon as it's listening."""
+    assert select.select([server.stdout], [], [], 5)[0], "no address printed"
+    return server.stdout.readline().decode()
+
+
 def start_server(*options):
     port = free_port()
     base = f"http://127.0.0.1:{port}/"
@@ -103,6 +116,7 @@ def start_server(*options):
         [COMMAND, f"--port={port}", "--command=exec /bin/sh", *options],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=buffered_environment(),
     )
     for attempt in range(50):
         try:
@@ -462,9 +476,7 @@ def check_stop(stop, ignored_by_command="HUP"):
         return fetch(f"{base}u", terminal_query(session, keys))
 
     try:
-        # The address is written as soon as the server listens, not when it exits.
-        assert select.select([server.stdout], [], [], 5)[0], "no address printed"
-        announced = server.stdout.readline().decode()
+        announced = announced_address(server)
         assert announced == f"Achilterm at http://localhost:{port}/\n", announced
         show = functools.partial(send, new_session(f"{base}u"))
         screen = screen_text(wait_for_screen(show, "", "pid [0-9]+"))
@@ -682,6 +694,38 @@ def check_without_path():
         wait_for_screen(send, "", re.escape(f"path={os.defpath}"))
 
 
+def check_announcement():
+    """A server says where it is, and runs even if it can't."""
+    # Asked for any free port, it names the one it got.
+    server = subprocess.Popen(
+        [COMMAND, "--port=0"], stdout=subprocess.PIPE, env=buffered_environment()
+    )
+    try:
+        port = int(re.search("localhost:([0-9]+)/", announced_address(server))[1])
+        assert port, "no port"
+        assert "Achilterm" in fetch(f"http://127.0.0.1:{port}/")
+    finally:
+        server.terminate()
+        server.communicate(timeout=10)
+
+    # Nothing reads its output.
+    reader, writer = os.pipe()
+    os.close(reader)
+    port = free_port()
+    server = subprocess.Popen(
+        [COMMAND, f"--port={port}"], stdout=writer, stderr=subprocess.PIPE
+    )
+    os.close(writer)
+    try:
+        url = f"http://127.0.0.1:{port}/"
+        assert wait_until(lambda: not connection_refused(port)), "not listening"
+        assert "Achilterm" in fetch(url)
+    finally:
+        server.terminate()
+        errors = server.communicate(timeout=10)[1].decode()
+    assert server.returncode == 0 and not errors, (server.returncode, errors)
+
+
 def check_many_descriptors():
     """Terminals must work when their descriptors are numbered 1024 or higher."""
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -839,6 +883,7 @@ def main():
     check_failed_start()
     check_without_path()
     check_many_descriptors()
+    check_announcement()
     print("smoke test passed")
 
 
