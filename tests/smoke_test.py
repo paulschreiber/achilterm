@@ -598,6 +598,11 @@ def main():
         send = functools.partial(terminal, name)
         return wait_for_screen(send, keys, pattern)
 
+    def end_shell(name):
+        # The shell may end before the reply is made, which then says so.
+        query = terminal_query(sessions[name], "\x15exit\r")
+        assert status(f"{base}u", query) in (200, 410), name
+
     try:
         index = fetch(base)
         assert "github.com/paulschreiber/achilterm" in index, "no source link"
@@ -611,7 +616,7 @@ def main():
         # runs first, while the next terminal would reuse the ended one's file
         # descriptor.
         terminal("stale")
-        terminal("stale", "exit\r")
+        end_shell("stale")
         time.sleep(1)
         terminal("newer")
         expect("newer", "echo private$((20+1))\r", "private21")
@@ -621,7 +626,7 @@ def main():
         time.sleep(1)
         screen = terminal("newer", " ")
         assert "intruder31" not in screen_text(screen), screen_text(screen)
-        terminal("newer", "\x15exit\r")
+        end_shell("newer")
 
         # An idle connection must not block other requests.
         with socket.create_connection(("127.0.0.1", port)):
@@ -629,7 +634,7 @@ def main():
             terminal("second")
 
             # Ending one session must leave the others working.
-            terminal("first", "exit\r")
+            end_shell("first")
             time.sleep(1)
             assert status(f"{base}u", terminal_query(sessions["first"])) == 410
             expect("second", "echo marker$((40+2))\r", "marker42")
