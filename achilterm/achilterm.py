@@ -538,8 +538,8 @@ class Multiplex:
         self.proc = {}
         # why a session was closed, by key, when there is a reason to give
         self.close_reasons = {}
-        # the last screens of commands that have ended, by key, until their pages
-        # have received them
+        # the sessions whose commands have ended, by key, kept until their pages
+        # have received the last screen
         self.last_screens = {}
         # when to kill each closed session's process group, until nothing is left
         self.ending = {}
@@ -670,14 +670,9 @@ class Multiplex:
             if reason:
                 self.close_reasons[key] = reason
             if keep_screen:
-                # for as long as its page would have been waited for
-                limit = self.idle_limit(proc)
-                self.last_screens[key] = {
-                    "term": proc["term"],
-                    "limit": limit,
-                    "deadline": time.monotonic() + limit,
-                    "sent": False,
-                }
+                # Wait for its page as long as before, counting from now.
+                proc.update(seen=time.monotonic(), sent=False)
+                self.last_screens[key] = proc
             with contextlib.suppress(OSError):
                 os.close(proc["fd"])
             with contextlib.suppress(OSError):
@@ -727,8 +722,8 @@ class Multiplex:
         for key, proc in list(self.proc.items()):
             if proc["seen"] < now - self.idle_limit(proc):
                 self.proc_close(key, "because the page was disconnected")
-        for key, last in list(self.last_screens.items()):
-            if now > last["deadline"]:
+        for key, proc in list(self.last_screens.items()):
+            if proc["seen"] < now - self.idle_limit(proc):
                 del self.last_screens[key]
 
     def proc_read(self, key):
@@ -780,22 +775,18 @@ class Multiplex:
     def dump(self, key, color=1, full=False):
         """The screen to send a session's page, or False if it has ended."""
         proc = self.proc.get(key)
-        if proc:
-            proc["seen"] = time.monotonic()
-            proc["shown"] += 1
-            term = proc["term"]
-        else:
+        if proc is None:
             # Send a command's last screen until the page shows that it arrived,
             # by asking again without wanting the whole screen once more.
-            last = self.last_screens.get(key)
-            if last is None or (last["sent"] and not full):
+            proc = self.last_screens.get(key)
+            if proc is None or (proc["sent"] and not full):
                 self.last_screens.pop(key, None)
                 return False
-            last["sent"] = True
-            # Allow as long again for a page that didn't get it to ask.
-            last["deadline"] = time.monotonic() + last["limit"]
-            term = last["term"]
+            proc["sent"] = True
+        proc["seen"] = time.monotonic()
+        proc["shown"] += 1
         try:
+            term = proc["term"]
             if full:
                 term.last_html = ""  # send the screen even if it hasn't changed
             return term.dumphtml(color)
