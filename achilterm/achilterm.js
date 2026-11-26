@@ -95,6 +95,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 						var de=r.responseXML.documentElement;
 						if(de.tagName=="pre") {
                     					dterm.innerHTML = r.responseText;
+							div.className='shown';
 							rmax=100;
 						} else {
 							rmax*=2;
