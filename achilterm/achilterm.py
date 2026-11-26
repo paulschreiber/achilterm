@@ -1035,12 +1035,17 @@ def main():
             handler_class=handler_class,
             server_class=ThreadingWSGIServer,
         ) as server:
-            # Written straight to standard output, so that it appears at once, even
-            # in a file. Being unable to write it mustn't stop the server.
-            address = f"Achilterm at http://localhost:{server.server_port}/\n"
-            if sys.stdout:  # otherwise descriptor 1 may be something else by now
+
+            def announce():
+                # Written straight to standard output, so that it appears at once,
+                # even in a file. Being unable to write it mustn't stop the server.
+                address = f"Achilterm at http://localhost:{server.server_port}/\n"
                 with contextlib.suppress(OSError):
                     os.write(1, address.encode())
+
+            if sys.stdout:  # otherwise descriptor 1 may be something else by now
+                # in its own thread, so that output nobody is reading delays nothing
+                threading.Thread(target=announce, daemon=True).start()
 
             def stop():
                 signal.sigwait(stop_signals)
