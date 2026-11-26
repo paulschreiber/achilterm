@@ -94,6 +94,10 @@ DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
 # Kill what's left of a closed terminal's command after this many seconds.
 KILL_DELAY = 5
+# The sizes a terminal can have, and the usual one.
+WIDTHS = range(3, 256)
+HEIGHTS = range(3, 100)
+DEFAULT_WIDTH, DEFAULT_HEIGHT = 80, 25
 # Signals that stop the server.
 STOP_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 # Names a request may use for this server. Refusing others stops a website from
@@ -132,6 +136,17 @@ def refuse(status, message, **headers):
 
 def clamp(value, low, high):
     return max(low, min(value, high))
+
+
+def requested_size(fields):
+    """The size a page asks for a new terminal, or the usual one if it can't be."""
+    try:
+        width, height = int(fields.get("w", "")), int(fields.get("h", ""))
+    except ValueError:  # missing, or not a number
+        return DEFAULT_WIDTH, DEFAULT_HEIGHT
+    if width in WIDTHS and height in HEIGHTS:
+        return width, height
+    return DEFAULT_WIDTH, DEFAULT_HEIGHT
 
 
 class Terminal:
@@ -890,11 +905,7 @@ class AchilTerm:
             c = req.POST.get("c", "")
             if not session:
                 # A page that names no session is new, and gets a terminal.
-                w = int(req.POST.get("w", 0))
-                h = int(req.POST.get("h", 0))
-                if not (w > 2 and w < 256 and h > 2 and h < 100):
-                    w, h = 80, 25
-                session = self.multi.create(w, h)
+                session = self.multi.create(*requested_size(req.POST))
                 if session is None:
                     refused = refuse(503, "The server is stopping.")
                     return refused(environ, start_response)
@@ -970,14 +981,20 @@ def main():
         help="default index file (default: achilterm.html)",
     )
     parser.add_option(
-        "-w", "--width", dest="width", default="80", help="set the width (default: 80)"
+        "-w",
+        "--width",
+        type="int",
+        dest="width",
+        default=DEFAULT_WIDTH,
+        help=f"set the width, from {WIDTHS[0]} to {WIDTHS[-1]} (default: %default)",
     )
     parser.add_option(
         "-H",
         "--height",
+        type="int",
         dest="height",
-        default="25",
-        help="set the height (default: 25)",
+        default=DEFAULT_HEIGHT,
+        help=f"set the height, from {HEIGHTS[0]} to {HEIGHTS[-1]} (default: %default)",
     )
     parser.add_option(
         "--timeout",
@@ -997,6 +1014,12 @@ def main():
         "(default: only localhost)",
     )
     (o, _a) = parser.parse_args()
+    for name, value, sizes in (
+        ("--width", o.width, WIDTHS),
+        ("--height", o.height, HEIGHTS),
+    ):
+        if value not in sizes:
+            parser.error(f"{name} must be from {sizes[0]} to {sizes[-1]}")
     if o.timeout < MINIMUM_TIMEOUT:
         parser.error(f"--timeout must be at least {MINIMUM_TIMEOUT} seconds")
     for host in o.allow_hosts:
