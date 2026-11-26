@@ -238,6 +238,10 @@ Changelog
 
 -  Exit, rather than hang, when the port is already in use
 
+-  When a command can't be started, say why in the terminal and end its
+   process, which used to carry on as a second copy of the server; start
+   commands even if ``PATH`` isn't set
+
 -  Notice on macOS and BSD that a command has ended, instead of leaving its
    terminal open
 

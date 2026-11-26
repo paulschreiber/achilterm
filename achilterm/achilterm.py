@@ -572,10 +572,35 @@ class Multiplex:
             # Blocking can run a waiting handler, which may raise: restore if so.
             signal.pthread_sigmask(signal.SIG_BLOCK, signal.valid_signals())
             pid, fd = pty.fork()
+            if pid == 0:
+                self.exec_command(w, h)  # never returns
+            # Record the session while signals are still held back, so that its
+            # process is cleaned up whatever happens next.
+            key = secrets.token_hex(16)
+            self.proc[key] = {
+                "fd": fd,
+                "pid": pid,
+                "term": Terminal(w, h),
+                "input": bytearray(),
+                # when the browser last asked for the screen, and how often
+                "seen": time.monotonic(),
+                "shown": 0,
+            }
         finally:
             if pid != 0:
                 signal.pthread_sigmask(signal.SIG_SETMASK, mask)
-        if pid == 0:
+        try:
+            fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", h, w, 0, 0))
+        except BaseException:
+            self.proc_close(key)
+            raise
+        return key
+
+    def exec_command(self, w, h):
+        """In a new terminal's process, run the command in its place."""
+        name = "the command"
+        try:
             # The command starts with the usual handling of every signal, and none
             # blocked, whatever the server inherited or set, or Python chose, such
             # as ignoring broken pipes.
@@ -609,22 +634,15 @@ class Multiplex:
             env["COLUMNS"] = str(w)
             env["LINES"] = str(h)
             env["TERM"] = "linux"
-            env["PATH"] = os.environ["PATH"]
+            env["PATH"] = os.environ.get("PATH", os.defpath)
+            name = cmd[0]
             os.execvpe(cmd[0], cmd, env)
-        else:
-            fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", h, w, 0, 0))
-            key = secrets.token_hex(16)
-            self.proc[key] = {
-                "fd": fd,
-                "pid": pid,
-                "term": Terminal(w, h),
-                "input": bytearray(),
-                # when the browser last asked for the screen, and how often
-                "seen": time.monotonic(),
-                "shown": 0,
-            }
-            return key
+        except (OSError, ValueError) as error:
+            message = f"achilterm: couldn't start {name}: {error}\r\n"
+            os.write(2, message.encode(errors="replace"))
+        finally:
+            # This process is a copy of the server, and mustn't carry on as one.
+            os._exit(127)
 
     def die(self):
         self.alive = 0

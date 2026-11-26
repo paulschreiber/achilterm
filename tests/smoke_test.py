@@ -514,6 +514,40 @@ def check_end_of_output():
         assert post(app, session).status_code == 410
 
 
+def check_failed_start():
+    """A command that can't be started says so, and leaves nothing running."""
+    server = os.getpid()
+    failure = FileNotFoundError(2, "No such file or directory")
+    with running_app("true") as app:
+        with mock.patch("os.execvpe", side_effect=failure), app.multi.lock:
+            session = new_app_session(app)
+            # The new process must never get back here.
+            assert os.getpid() == server
+            term = app.multi.proc[session]["term"]
+        assert wait_until(lambda: session not in app.multi.proc), "stayed open"
+        text = screen_text(term.dumphtml())
+        assert "couldn't start /bin/sh: " in text, text
+        assert "No such file or directory" in text, text
+
+    # Without PATH, commands are still found.
+    with mock.patch.dict(os.environ), running_app("echo found; sleep 30") as app:
+        del os.environ["PATH"]
+        send = functools.partial(app_screen, app, new_app_session(app))
+        wait_for_screen(send, "", "found")
+
+    # A terminal that can't be set up is closed again.
+    with running_app("sleep 30") as app:
+        with mock.patch("fcntl.ioctl", side_effect=OSError("deliberate failure")):
+            try:
+                app.multi.create()
+            except OSError:
+                pass
+            else:
+                raise AssertionError("the failure was ignored")
+        assert not app.multi.proc, app.multi.proc
+        assert wait_until(lambda: not app.multi.ending), app.multi.ending
+
+
 def check_many_descriptors():
     """Terminals must work when their descriptors are numbered 1024 or higher."""
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -655,6 +689,7 @@ def main():
     # Only killing ends this command, which takes the server several seconds.
     check_stop(signal.SIGTERM, "HUP TERM")
     check_end_of_output()
+    check_failed_start()
     check_many_descriptors()
     print("smoke test passed")
 
