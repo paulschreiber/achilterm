@@ -69,3 +69,9 @@ p.source {
 	margin: 4px;
 	font: 11px sans-serif;
 }
+/* A long message wraps to the width of the screen, if there is one. */
+#term:has(pre.term) pre.stat {
+	width: 0;
+	min-width: calc(100% - 8px);
+	white-space: pre-wrap;
+}

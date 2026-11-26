@@ -43,8 +43,8 @@ p.source {
 	margin: 4px;
 	font: 11px sans-serif;
 }
-/* A message below the terminal wraps to its width rather than widening it. */
-#term p {
+/* A long message wraps to the width of the screen, if there is one. */
+#term:has(pre.term) p {
 	width: 0;
 	min-width: 100%;
 }
