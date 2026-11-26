@@ -1,14 +1,8 @@
 achilterm={};
 achilterm.Terminal_ctor=function(id,width,height) {
-	var ie=0;
-	if(window.ActiveXObject)
-		ie=1;
-	var chrome = navigator.userAgent.match('Chrome');
-	var webkit = navigator.userAgent.match('WebKit');
 	var sid=""+Math.round(Math.random()*1000000000);
 	var query0="s="+sid+"&w="+width+"&h="+height;
 	var query1=query0+"&c=1&k=";
-	var buf="";
 	var timeout;
 	var keybuf=[];
 	var sending=0;
@@ -31,7 +25,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			r.onreadystatechange = function () {
 				if (r.readyState==4) {
 					if(r.status==200) {
-						de=r.responseXML.documentElement;
+						var de=r.responseXML.documentElement;
 						if(de.tagName=="pre") {
                     					dterm.innerHTML = r.responseText;
 							rmax=100;
@@ -55,89 +49,64 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			timeout=window.setTimeout(update,1);
 		}
 	}
-	function keypress(ev) {
-		if (!ev) var ev=window.event;
-		var kc;
-		var k="";
-		if (ev.keyCode)
-			kc=ev.keyCode;
-		if (ev.which)
-			kc=ev.which;
-		if (ev.altKey) {
-			if (kc>=65 && kc<=90)
-				kc+=32;
-			if (kc>=97 && kc<=122) {
-				k=String.fromCharCode(27)+String.fromCharCode(kc);
-			}
-		} else if (ev.ctrlKey) {
-			if (kc>=65 && kc<=90) k=String.fromCharCode(kc-64); // Ctrl-A..Z
-			else if (kc>=97 && kc<=122) k=String.fromCharCode(kc-96); // Ctrl-A..Z
-			else if (kc==54)  k=String.fromCharCode(30); // Ctrl-^
-			else if (kc==109) k=String.fromCharCode(31); // Ctrl-_
-			else if (kc==219) k=String.fromCharCode(27); // Ctrl-[
-			else if (kc==220) k=String.fromCharCode(28); // Ctrl-\
-			else if (kc==221) k=String.fromCharCode(29); // Ctrl-]
-			else if (kc==219) k=String.fromCharCode(29); // Ctrl-]
-			else if (kc==219) k=String.fromCharCode(0);  // Ctrl-@
-		} else if (ev.which==0) {
-			if (kc==9) k=String.fromCharCode(9);  // Tab
-			else if (kc==8) k=String.fromCharCode(127);  // Backspace
-			else if (kc==27) k=String.fromCharCode(27); // Escape
-			else {
-				if (kc==33) k="[5~";        // PgUp
-				else if (kc==34) k="[6~";   // PgDn
-				else if (kc==35) k="[4~";   // End
-				else if (kc==36) k="[1~";   // Home
-				else if (kc==37) k="[D";    // Left
-				else if (kc==38) k="[A";    // Up
-				else if (kc==39) k="[C";    // Right
-				else if (kc==40) k="[B";    // Down
-				else if (kc==45) k="[2~";   // Ins
-				else if (kc==46) k="[3~";   // Del
-				else if (kc==112) k="[[A";  // F1
-				else if (kc==113) k="[[B";  // F2
-				else if (kc==114) k="[[C";  // F3
-				else if (kc==115) k="[[D";  // F4
-				else if (kc==116) k="[[E";  // F5
-				else if (kc==117) k="[17~"; // F6
-				else if (kc==118) k="[18~"; // F7
-				else if (kc==119) k="[19~"; // F8
-				else if (kc==120) k="[20~"; // F9
-				else if (kc==121) k="[21~"; // F10
-				else if (kc==122) k="[23~"; // F11
-				else if (kc==123) k="[24~"; // F12
-				if (k.length) {
-					k=String.fromCharCode(27)+k;
-				}
-			}
-		} else {
-			if (kc==8)
-				k=String.fromCharCode(127);  // Backspace
-			else
-				k=String.fromCharCode(kc);
-		}
-		if(k.length) {
-			if(k=="+") {
-				queue("%2B");
-			} else {
-				queue(encodeURIComponent(k));
-			}
-		}
-		ev.cancelBubble=true;
-		if (ev.stopPropagation) ev.stopPropagation();
-		if (ev.preventDefault)  ev.preventDefault();
-		return false;
+	// Keys that don't type a character, and what a Linux console sends for them.
+	var special_keys={
+		'Backspace':'\x7f', 'Tab':'\t', 'Escape':'\x1b',
+		'ArrowUp':'\x1b[A', 'ArrowDown':'\x1b[B', 'ArrowRight':'\x1b[C', 'ArrowLeft':'\x1b[D',
+		'Home':'\x1b[1~', 'Insert':'\x1b[2~', 'Delete':'\x1b[3~', 'End':'\x1b[4~',
+		'PageUp':'\x1b[5~', 'PageDown':'\x1b[6~',
+		'F1':'\x1b[[A', 'F2':'\x1b[[B', 'F3':'\x1b[[C', 'F4':'\x1b[[D', 'F5':'\x1b[[E',
+		'F6':'\x1b[17~', 'F7':'\x1b[18~', 'F8':'\x1b[19~', 'F9':'\x1b[20~', 'F10':'\x1b[21~',
+		'F11':'\x1b[23~', 'F12':'\x1b[24~'
+	};
+	// Ctrl with these characters, in addition to Ctrl with a letter.
+	var control_keys={'@':0, '[':27, '\\':28, ']':29, '6':30, '^':30, '-':31, '_':31};
+	function is_altgr(ev) {
+		// AltGr types characters, though some systems also report Ctrl and Alt.
+		return ev.getModifierState('AltGraph');
 	}
+	function letter(ev) {
+		if(/^[a-z]$/i.test(ev.key))
+			return ev.key.toLowerCase();
+		// On other layouts, such as Cyrillic, use the key's position.
+		if(ev.key.length==1 && ev.key.charCodeAt(0)>127 && /^Key[A-Z]$/.test(ev.code))
+			return ev.code.charAt(3).toLowerCase();
+		return '';
+	}
+	function send_key(ev,k) {
+		ev.preventDefault();
+		ev.stopPropagation();
+		queue(encodeURIComponent(k));
+	}
+	// Special keys and Ctrl or Alt combinations. Anything not sent here is left
+	// to the browser, and characters then arrive as keypress events.
 	function keydown(ev) {
-		if (!ev) var ev=window.event;
-		if (ie || chrome || webkit) {
-			o={9:1,8:1,27:1,33:1,34:1,35:1,36:1,37:1,38:1,39:1,40:1,45:1,46:1,112:1,
-			113:1,114:1,115:1,116:1,117:1,118:1,119:1,120:1,121:1,122:1,123:1};
-			if (o[ev.keyCode] || ev.ctrlKey || ev.altKey) {
-				ev.which=0;
-				return keypress(ev);
-			}
+		if(ev.metaKey || ev.isComposing || is_altgr(ev))
+			return;
+		var k;
+		if(ev.ctrlKey && ev.altKey) {
+			return;
+		} else if(ev.ctrlKey) {
+			if(letter(ev))
+				k=String.fromCharCode(letter(ev).charCodeAt(0)-96); // Ctrl-A..Z
+			else if(control_keys.hasOwnProperty(ev.key))
+				k=String.fromCharCode(control_keys[ev.key]);
+		} else if(ev.altKey) {
+			if(letter(ev))
+				k='\x1b'+letter(ev);
+		} else if(special_keys.hasOwnProperty(ev.key)) {
+			k=special_keys[ev.key];
 		}
+		if(k!==undefined)
+			send_key(ev,k);
+	}
+	function keypress(ev) {
+		if(ev.metaKey || ((ev.ctrlKey || ev.altKey) && !is_altgr(ev)))
+			return;
+		if(ev.key=='Enter')
+			send_key(ev,'\r');
+		else if(ev.charCode)
+			send_key(ev,String.fromCodePoint(ev.charCode));
 	}
 	function init() {
 		div.appendChild(dterm);
