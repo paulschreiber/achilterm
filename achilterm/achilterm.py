@@ -38,7 +38,7 @@ import pty
 import pwd
 import re
 import secrets
-import select
+import selectors
 import signal
 import struct
 import sys
@@ -546,11 +546,10 @@ class Multiplex:
         # synchronize methods
         for name in [
             "create",
-            "fds",
+            "watch",
             "proc_read",
             "proc_write",
             "proc_flush",
-            "pending",
             "expire",
             "dump",
             "die",
@@ -563,10 +562,12 @@ class Multiplex:
     def create(self, w=80, h=25):
         pid, fd = pty.fork()
         if pid == 0:
+            # The command mustn't inherit other terminals or connections.
             try:
                 fdl = [int(i) for i in os.listdir("/proc/self/fd")]
             except OSError:
-                fdl = range(256)
+                os.closerange(3, os.sysconf("SC_OPEN_MAX"))
+                fdl = []
             for i in [i for i in fdl if i > 2]:
                 try:
                     os.close(i)
@@ -614,9 +615,13 @@ class Multiplex:
     def run(self):
         return self.alive
 
-    def fds(self):
-        """Map each session's file descriptor to its key."""
-        return {proc["fd"]: key for key, proc in self.proc.items()}
+    def watch(self, selector):
+        """Wait for each session's output, and for room for any pending input."""
+        for key, proc in self.proc.items():
+            events = selectors.EVENT_READ
+            if proc["input"]:
+                events |= selectors.EVENT_WRITE
+            selector.register(proc["fd"], events, key)
 
     def proc_close(self, key, reason=None):
         """End a session. Its page is told the reason, if one is given."""
@@ -672,10 +677,6 @@ class Multiplex:
         except (KeyError, OSError):
             self.proc_close(key)
 
-    def pending(self):
-        """Like fds(), for sessions with input still to be written."""
-        return {proc["fd"]: key for key, proc in self.proc.items() if proc["input"]}
-
     def dump(self, key, color=1, full=False):
         proc = self.proc.get(key)
         if proc is None:
@@ -694,19 +695,18 @@ class Multiplex:
     def loop(self):
         while self.run():
             self.expire()
-            reading = self.fds()
-            writing = self.pending()
-            try:
-                i, o, _e = select.select(list(reading), list(writing), [], 1.0)
-            except (OSError, ValueError):
-                continue
+            # Unlike select(), poll() works with any number of descriptors.
+            with selectors.PollSelector() as selector:
+                self.watch(selector)
+                ready = selector.select(1.0)
             # A session may have ended while waiting. Its key no longer matches
             # anything, even if a new session has its file descriptor.
-            for fd in o:
-                self.proc_flush(writing[fd])
-            for fd in i:
-                self.proc_read(reading[fd])
-            if len(i):
+            for item, events in ready:
+                if events & selectors.EVENT_WRITE:
+                    self.proc_flush(item.data)
+                if events & selectors.EVENT_READ:
+                    self.proc_read(item.data)
+            if any(events & selectors.EVENT_READ for item, events in ready):
                 time.sleep(0.002)
         # Requests may still be ending sessions while the server stops.
         with self.lock:

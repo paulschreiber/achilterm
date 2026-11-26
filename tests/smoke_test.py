@@ -5,6 +5,7 @@ import hashlib
 import os
 import random
 import re
+import resource
 import socket
 import subprocess
 import sys
@@ -215,9 +216,10 @@ def check_escape_sequences():
             ElementTree.fromstring(term.dumphtml().encode())
 
 
-def post(app, name):
+def post(app, name, keys=""):
     """Ask an application running here for a terminal's screen."""
-    request = webob.Request.blank("/u", headers=PAGE_HEADERS, POST=terminal_query(name))
+    query = terminal_query(name, keys)
+    request = webob.Request.blank("/u", headers=PAGE_HEADERS, POST=query)
     return request.get_response(app)
 
 
@@ -281,6 +283,36 @@ def check_output_fault():
     finally:
         app.multi.die()
         app.multi.thread.join(10)
+
+
+def check_many_descriptors():
+    """Terminals must work when their descriptors are numbered 1024 or higher."""
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, min(2048, hard)), hard))
+    filler = [os.open(os.devnull, os.O_RDONLY)]
+    app = None
+    try:
+        while filler[-1] < 1024:
+            filler.append(os.open(os.devnull, os.O_RDONLY))
+        app = AchilTerm('read line; echo "got $line"; sleep 30')
+        text = ""
+        for attempt in range(50):
+            response = post(app, "high", "input\r" if attempt == 0 else "")
+            response.decode_content()
+            if "<pre" in response.text:
+                text = screen_text(response.text)
+            if "got input" in text:
+                break
+            time.sleep(0.1)
+        assert "got input" in text, text
+        assert min(app.multi.proc[key]["fd"] for key in app.multi.proc) >= 1024
+    finally:
+        if app:
+            app.multi.die()
+            app.multi.thread.join(10)
+        for fd in filler:
+            os.close(fd)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
 
 
 def screen_text(response):
@@ -396,6 +428,7 @@ def main():
     check_escape_sequences()
     check_expiry()
     check_output_fault()
+    check_many_descriptors()
     print("smoke test passed")
 
 
