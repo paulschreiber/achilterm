@@ -272,4 +272,3 @@ achilterm.Terminal_ctor=function(id,width,height) {
 achilterm.Terminal=function(id,width,height) {
 	return new this.Terminal_ctor(id,width,height);
 }
-

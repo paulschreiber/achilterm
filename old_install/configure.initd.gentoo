@@ -1,11 +1,11 @@
 #!/sbin/runscript
 
 # Achilterm Gentoo script 2013 Florent Gallaire
-# From the AjaxTerm Gentoo script by Mark Gillespie 
+# From the AjaxTerm Gentoo script by Mark Gillespie
 
 DAEMON=%(bin)s/achilterm
 PORT=%(port)s
-PIDFILE=/var/run/achilterm.pid 
+PIDFILE=/var/run/achilterm.pid
 
 depend()
 {
@@ -22,7 +22,7 @@ start()
 stop()
 {
     ebegin "Stopping Achilterm"
-    start-stop-daemon  --stop --pidfile $PIDFILE 
-    rm -f $PIDFILE 
+    start-stop-daemon  --stop --pidfile $PIDFILE
+    rm -f $PIDFILE
     eend $?
 }
