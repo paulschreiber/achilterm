@@ -697,11 +697,13 @@ class Multiplex:
         try:
             proc = self.proc[key]
             data = os.read(proc["fd"], 65536)
+        except BlockingIOError:
+            return  # there's nothing to read after all
         except (KeyError, OSError):
             data = b""
         if not data:
-            # The command has ended. Linux reports an error then, but macOS and
-            # BSD read nothing, every time.
+            # The command has ended. Reading then fails on Linux, but on macOS and
+            # BSD every read returns nothing.
             self.proc_close(key)
             return
         try:

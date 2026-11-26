@@ -499,17 +499,17 @@ def check_stop(stop, ignored_by_command="HUP"):
 
 def check_end_of_output():
     """A terminal closes when reading it returns nothing, as on macOS and BSD."""
-    real_read = os.read
     with running_app("sleep 30") as app:
         session = new_app_session(app)
-        fd = app.multi.proc[session]["fd"]
-
-        def read(descriptor, size):
-            return b"" if descriptor == fd else real_read(descriptor, size)
-
-        with mock.patch("os.read", read), app.multi.lock:
-            app.multi.proc_read(session)
-        assert session not in app.multi.proc, "the terminal stayed open"
+        # Hold the lock so that only these reads happen.
+        with app.multi.lock:
+            # Having nothing to read yet isn't the end.
+            with mock.patch("os.read", side_effect=BlockingIOError):
+                app.multi.proc_read(session)
+            assert session in app.multi.proc, "a live terminal was closed"
+            with mock.patch("os.read", return_value=b""):
+                app.multi.proc_read(session)
+            assert session not in app.multi.proc, "the terminal stayed open"
         assert post(app, session).status_code == 410
 
 
