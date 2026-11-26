@@ -93,9 +93,6 @@ UNPRINTABLE = frozenset(
 # timeouts than the minimum would close terminals that are still open.
 DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
-# Close a new terminal sooner if its page never asks for it again: the reply
-# with its ID was probably lost, and the page given another terminal.
-UNUSED_TIMEOUT = 30
 # Names a request may use for this server. Refusing others stops a website from
 # reaching it by pointing its own name at this machine.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -634,8 +631,10 @@ class Multiplex:
         now = time.monotonic()
         for key, proc in list(self.proc.items()):
             timeout = self.timeout
-            if proc["shown"] < 2:  # only for the request that started it
-                timeout = min(timeout, UNUSED_TIMEOUT)
+            if proc["shown"] < 2:
+                # Only the request that started it has asked: the reply with its ID
+                # was probably lost, so don't keep it as long.
+                timeout = min(timeout, MINIMUM_TIMEOUT)
             if proc["seen"] < now - timeout:
                 self.proc_close(key, "because the page was disconnected")
 

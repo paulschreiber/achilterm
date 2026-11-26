@@ -79,7 +79,10 @@ achilterm.Terminal_ctor=function(id,width,height) {
 //				debug("xhr:"+((new Date).getTime())+" state:"+r.readyState+" status:"+r.status+" statusText:"+r.statusText);
 				if (r.readyState==4) {
 					sled.className='off';
-					var session=r.getResponseHeader('X-Achilterm-Session');
+					var session=r.getResponseHeader('X-Achilterm-Session') || params.get('s');
+					// A screen that starts a session but doesn't name it can't be used,
+					// and asking again would start another terminal each time.
+					var unnamed=r.status==200 && r.responseXML && !session;
 					if(r.status==200 && r.responseXML && session) {
 						if(retrying) {
 							retrying=false;
@@ -97,18 +100,20 @@ achilterm.Terminal_ctor=function(id,width,height) {
 						}
 						sending=0;
 						timeout=window.setTimeout(update,rmax);
-					} else if([0,200,408,429].includes(r.status) || r.status>=500) {
+					} else if(!unnamed && ([0,200,408,429].includes(r.status) || r.status>=500)) {
 						// The server or the connection may only be away briefly. Sending
 						// part of what was typed could run the wrong command, so drop it.
 						retrying=true;
 						keybuf='';
 						sending=0;
 						debug(`Connection lost, retrying. Typing is ignored. Status:${r.status}`);
-						timeout=window.setTimeout(update,2000);
+						// Without a session, each request starts a terminal: ask less often.
+						timeout=window.setTimeout(update,params.get('s') ? 2000 : 10000);
 					} else {
 						// The server refused this page, and would again.
 						refused=true;
-						debug(r.responseText || `Connection error status:${r.status}`);
+						debug(unnamed ? 'The reply had no session ID. Check that no proxy removes it.'
+							: r.responseText || `Connection error status:${r.status}`);
 					}
 				}
 			}

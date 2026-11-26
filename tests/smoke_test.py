@@ -20,7 +20,7 @@ from xml.etree import ElementTree
 
 import webob
 
-from achilterm.achilterm import UNUSED_TIMEOUT, AchilTerm, Terminal
+from achilterm.achilterm import MINIMUM_TIMEOUT, AchilTerm, Terminal
 
 COMMAND = os.path.join(os.path.dirname(sys.executable), "achilterm")
 
@@ -293,7 +293,7 @@ def check_unused():
         assert post(app, used).status_code == 200
         with app.multi.lock:
             for proc in app.multi.proc.values():
-                proc["seen"] -= UNUSED_TIMEOUT + 1
+                proc["seen"] -= MINIMUM_TIMEOUT + 1
             app.multi.expire()
             assert list(app.multi.proc) == [used], (unused, used)
 

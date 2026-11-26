@@ -58,7 +58,8 @@ Set the terminal height (default: 25).
 .TP
 \fB\-\-timeout\fR=\fITIMEOUT\fR
 Close a terminal when no browser has asked for its screen for this many seconds
-(default: 300, at least 90).
+(default: 300, at least 90). A new terminal that has been asked for only once is
+closed after 90 seconds.
 .TP
 \fB\-\-allow\-host\fR=\fINAME\fR
 Also accept requests for this host name; repeat for more names. Only localhost
