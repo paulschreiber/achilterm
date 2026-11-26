@@ -17,4 +17,3 @@ clean:
 	rm achilterm.initd
 	rm achilterm.1.gz
 	rm Makefile
-
