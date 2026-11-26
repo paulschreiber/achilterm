@@ -273,8 +273,9 @@ Changelog
 
 -  Don't let other websites show the terminal in a frame
 
--  Retry after a lost connection, ignoring typing until it returns, and show
-   why a page was refused; meanwhile, Ctrl-Shift-R reloads the page
+-  Retry after a lost connection, ignoring typing until it returns (though
+   Ctrl-Shift-R still reloads the page, as Command-R does at any time on a Mac),
+   and show why a page was refused
 
 -  Fix a security flaw that could connect a tab whose shell had ended to
    another user's terminal
