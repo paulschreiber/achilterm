@@ -1,6 +1,7 @@
 """Start the installed achilterm command and exercise it over HTTP."""
 
 import gzip
+import html
 import os
 import re
 import socket
@@ -11,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from importlib.metadata import version
+from xml.etree import ElementTree
 
 COMMAND = os.path.join(os.path.dirname(sys.executable), "achilterm")
 
@@ -48,7 +50,10 @@ def main():
             {"s": session, "w": 80, "h": 25, "c": 1, "k": keys}
         )
         # POST, as the browser does, so that large input fits.
-        return fetch(f"{base}u", query.encode())
+        response = fetch(f"{base}u", query.encode())
+        # The browser can't update the screen from invalid XML.
+        ElementTree.fromstring(response.encode())
+        return response
 
     def expect(session, keys, pattern):
         """Send keys, then wait until the screen matches the pattern."""
@@ -56,8 +61,8 @@ def main():
             # A response only holds the screen when it has changed, so check
             # every one, including the response to the keys.
             screen = terminal(session, keys if attempt == 0 else "")
-            if re.search(pattern, re.sub(r"<[^>]+>", "", screen)):
-                return
+            if re.search(pattern, html.unescape(re.sub(r"<[^>]+>", "", screen))):
+                return screen
             time.sleep(0.1)
         raise AssertionError(f"{pattern!r} never appeared: {screen}")
 
@@ -115,6 +120,21 @@ def main():
                 r"\[\s+\?\s+6\s+c",
             )
             expect("second", "echo still$((6+6))\r", "still12")
+
+            # Characters beyond Latin-1 must appear as written, in the usual
+            # colors, and control characters must not break the response.
+            terminal("fifth")
+            text = "\u00e9\u20ac\u03bb\u0416\u2500\u4e2d\U0001f600"
+            octal = "".join(f"\\{byte:03o}" for byte in text.encode())
+            controls = "\\001\\002\\016\\177\\302\\205\\357\\277\\276"
+            screen = expect(
+                "fifth",
+                f"printf '<{controls}{octal}>\\n'; echo end$((7+7))\r",
+                "end14",
+            )
+            assert f"<{text}>" in html.unescape(re.sub(r"<[^>]+>", "", screen)), screen
+            colors = set(re.findall(r'class="f(\d+) b(\d+)"', screen))
+            assert colors <= {("7", "0"), ("7", "1")}, colors
     finally:
         server.terminate()
         errors = server.communicate(timeout=10)[1].decode()
