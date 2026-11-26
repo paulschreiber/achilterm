@@ -480,10 +480,10 @@ class Multiplex:
     def __init__(self, cmd=None):
         # signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         self.cmd = cmd
-        # Sessions are keyed by a number that is never reused. File descriptors
-        # are, so one must not identify a session beyond its lifetime.
+        # The kernel reuses file descriptors, so sessions are keyed by a number
+        # that is never reused.
         self.proc = {}
-        self.keys = itertools.count(1)
+        self.key_counter = itertools.count(1)
         self.lock = threading.RLock()
         self.thread = threading.Thread(target=self.loop)
         self.alive = 1
@@ -540,7 +540,7 @@ class Multiplex:
         else:
             fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", h, w, 0, 0))
-            key = next(self.keys)
+            key = next(self.key_counter)
             self.proc[key] = {
                 "fd": fd,
                 "pid": pid,
@@ -633,8 +633,10 @@ class Multiplex:
                 self.proc_read(reading[fd])
             if len(i):
                 time.sleep(0.002)
-        for key in list(self.proc):
-            self.proc_close(key)
+        # Requests may still be ending sessions while the server stops.
+        with self.lock:
+            for key in list(self.proc):
+                self.proc_close(key)
 
 
 class AchilTerm:
