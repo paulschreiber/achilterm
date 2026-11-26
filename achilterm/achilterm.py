@@ -24,14 +24,32 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 __version__ = '0.30'
 
-import array,fcntl,glob,html,mimetypes,optparse,os,pty,random,re,signal,select,sys,threading,time,termios,struct,pwd
-
-import webob
+import array
+import contextlib
+import fcntl
+import glob
+import gzip
+import html
+import mimetypes
+import optparse
+import os
+import pty
+import pwd
+import re
+import select
+import signal
+import struct
+import sys
+import termios
+import threading
+import time
+from io import BytesIO
 from socket import gethostname
 from socketserver import ThreadingMixIn
-from wsgiref.simple_server import make_server, WSGIRequestHandler, WSGIServer
-import gzip
-from io import BytesIO
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
+
+import webob
+
 
 class Terminal:
 	def __init__(self,width=80,height=24):
@@ -150,7 +168,7 @@ class Terminal:
 		self.cx=max(0,self.cx-1)
 	def esc_0x09(self,s):
 		x=self.cx+8
-		q,r=divmod(x,8)
+		q,_r=divmod(x,8)
 		self.cx=(q*8)%self.width
 	def esc_0x0a(self,s):
 		self.cursor_down()
@@ -336,7 +354,7 @@ class Terminal:
 				bg,fg=1,7
 			if (bg!=span_bg or fg!=span_fg or i==h*w-1):
 				if len(span):
-					r+='<span class="f%d b%d">%s</span>'%(span_fg,span_bg,html.escape(span))
+					r+=f'<span class="f{span_fg:d} b{span_bg:d}">{html.escape(span)}</span>'
 				span=""
 				span_bg,span_fg=bg,fg
 			if c == 0:
@@ -347,7 +365,7 @@ class Terminal:
 				span+=chr(c&0xFFFF)
 			if i%w==w-1:
 				span+='\n'
-		r='<?xml version="1.0" encoding="UTF-8"?><pre class="term">%s</pre>'%r
+		r=f'<?xml version="1.0" encoding="UTF-8"?><pre class="term">{r}</pre>'
 		if self.last_html==r:
 			return '<?xml version="1.0"?><idem></idem>'
 		else:
@@ -358,7 +376,7 @@ class Terminal:
 		d=self.scr
 		r=""
 		for i in range(self.height):
-			r+="|%s|\n"%d[self.width*i:self.width*(i+1)]
+			r+=f"|{d[self.width*i:self.width*(i+1)]}|\n"
 		return r
 
 class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
@@ -440,7 +458,7 @@ class Multiplex:
 				try:
 					os.close(i)
 					os.kill(self.proc[i]['pid'],signal.SIGTERM)
-				except (IOError,OSError):
+				except OSError:
 					pass
 				del self.proc[i]
 	def proc_read(self,fd):
@@ -451,12 +469,12 @@ class Multiplex:
 			if reply:
 				os.write(fd,reply)
 			self.proc[fd]['time']=time.time()
-		except (KeyError,IOError,OSError):
+		except (KeyError, OSError):
 			self.proc_kill(fd)
 	def proc_write(self,fd,s):
 		try:
 			os.write(fd,s.encode('utf-8'))
-		except (IOError,OSError):
+		except OSError:
 			self.proc_kill(fd)
 	def dump(self,fd,color=1):
 		try:
@@ -468,7 +486,7 @@ class Multiplex:
 		while self.run():
 			fds=self.fds()
 			try:
-				i,o,e=select.select(fds, [], [], 1.0)
+				i,_o,_e=select.select(fds, [], [], 1.0)
 			except (OSError, ValueError):
 				continue
 			for fd in i:
@@ -479,7 +497,7 @@ class Multiplex:
 			try:
 				os.close(i)
 				os.kill(self.proc[i]['pid'],signal.SIGTERM)
-			except (IOError,OSError):
+			except OSError:
 				pass
 
 class AchilTerm:
@@ -489,9 +507,11 @@ class AchilTerm:
 			index_file = 'achiltermlite.html'
 		self.files={}
 		for i in ['css','html','js']:
-			for j in glob.glob('*.%s'%i):
-				self.files[j]=open(j).read()
-		self.files['index']=open(index_file).read() % {'width': width, 'height': height}
+			for j in glob.glob(f'*.{i}'):
+				with open(j) as f:
+					self.files[j]=f.read()
+		with open(index_file) as f:
+			self.files['index']=f.read() % {'width': width, 'height': height}
 		self.mime = mimetypes.types_map.copy()
 		self.mime['.html']= 'text/html; charset=UTF-8'
 		# Older Pythons map .js to a type that WebOb won't write text to.
@@ -556,31 +576,28 @@ def main():
 	parser.add_option("-L", "--lite", action="store_true", dest="lite", default=0, help="use Achiltermlite")
 	parser.add_option("-w", "--width", dest="width", default="80", help="set the width (default: 80)")
 	parser.add_option("-H", "--height", dest="height", default="25", help="set the height (default: 25)")
-	(o, a) = parser.parse_args()
+	(o, _a) = parser.parse_args()
 	if o.daemon:
 		pid=os.fork()
 		if pid == 0:
 			#os.setsid() ?
 			os.setpgrp()
-			nullin = open('/dev/null', 'r')
-			nullout = open('/dev/null', 'w')
-			os.dup2(nullin.fileno(), sys.stdin.fileno())
-			os.dup2(nullout.fileno(), sys.stdout.fileno())
-			os.dup2(nullout.fileno(), sys.stderr.fileno())
+			with open(os.devnull) as nullin, open(os.devnull, 'w') as nullout:
+				os.dup2(nullin.fileno(), sys.stdin.fileno())
+				os.dup2(nullout.fileno(), sys.stdout.fileno())
+				os.dup2(nullout.fileno(), sys.stderr.fileno())
 			if os.getuid()==0 and o.uid:
 				try:
 					os.setuid(int(o.uid))
-				except:
+				except (ValueError, OSError):
 					os.setuid(pwd.getpwnam(o.uid).pw_uid)
 		else:
-			try:
-				open(o.pidfile,'w+').write(str(pid)+'\n')
-			except:
-				pass
-			print('Achilterm at http://localhost:%s/ pid: %d' % (o.port,pid))
+			with contextlib.suppress(OSError), open(o.pidfile,'w+') as pidfile:
+				pidfile.write(str(pid)+'\n')
+			print(f'Achilterm at http://localhost:{o.port}/ pid: {pid:d}')
 			sys.exit(0)
 	else:
-		print('Achilterm at http://localhost:%s/' % o.port)
+		print(f'Achilterm at http://localhost:{o.port}/')
 	if o.log:
 		handler_class = WSGIRequestHandler
 	else:
