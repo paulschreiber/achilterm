@@ -93,9 +93,7 @@ UNPRINTABLE = frozenset(
 # timeouts than the minimum would close terminals that are still open.
 DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
-# The command line's other limits. A far longer timeout would overflow the clock
-# arithmetic.
-TIMEOUTS = range(MINIMUM_TIMEOUT, 10**9)
+# The TCP ports the server can be given; 0 picks a free one.
 PORTS = range(65536)
 # Kill what's left of a closed terminal's command after this many seconds.
 KILL_DELAY = 5
@@ -143,14 +141,17 @@ def clamp(value, low, high):
     return max(low, min(value, high))
 
 
+def decimal_number(value):
+    """value as a number if it's a whole one written in decimal, otherwise None."""
+    # With any leading zeros, and without cutting off fractions.
+    with contextlib.suppress(ValueError):
+        return int(str(value))
+    return None
+
+
 def whole_number(value, name, allowed):
     """A setting such as a width as a number, if it is one of those allowed."""
-    try:
-        # In decimal, with any leading zeros, and without cutting off fractions.
-        number = int(str(value))
-    except ValueError:
-        number = None
-    # Looking for None in a long range would compare it with every number.
+    number = decimal_number(value)
     if number is None or number not in allowed:
         smallest, largest = allowed[0], allowed[-1]
         raise ValueError(f"{name} must be a whole number from {smallest} to {largest}")
@@ -755,10 +756,10 @@ class Multiplex:
         """Close the sessions that no browser is showing any more."""
         now = time.monotonic()
         for key, proc in list(self.proc.items()):
-            if proc["seen"] < now - self.idle_limit(proc):
+            if now - proc["seen"] > self.idle_limit(proc):
                 self.proc_close(key, "because the page was disconnected")
         for key, proc in list(self.last_screens.items()):
-            if proc["seen"] < now - self.idle_limit(proc):
+            if now - proc["seen"] > self.idle_limit(proc):
                 del self.last_screens[key]
 
     def proc_read(self, key):
@@ -1047,10 +1048,12 @@ def main():
     try:
         width = whole_number(o.width, "--width", WIDTHS)
         height = whole_number(o.height, "--height", HEIGHTS)
-        timeout = whole_number(o.timeout, "--timeout", TIMEOUTS)
         port = whole_number(o.port, "--port", PORTS)
     except ValueError as error:
         parser.error(str(error))
+    timeout = decimal_number(o.timeout)
+    if timeout is None or timeout < MINIMUM_TIMEOUT:
+        parser.error(f"--timeout must be a whole number, at least {MINIMUM_TIMEOUT}")
     for host in o.allow_hosts:
         try:
             allowed_host(host)

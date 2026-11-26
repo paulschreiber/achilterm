@@ -244,9 +244,12 @@ Changelog
    that isn't a number; sizes are now read as decimal, so forms such as ``0x50``
    are rejected and ``0120`` means 120
 
--  Reject a ``--port`` or ``--timeout`` that can't be used with a usage error,
-   instead of showing a traceback or later stopping terminal output; a timeout
-   is read as decimal, so ``0300`` means 300 rather than 192
+-  Reject a ``--port`` that isn't a number from 0 to 65535 with a usage error,
+   instead of a traceback
+
+-  Read ``--timeout`` as decimal, so ``0300`` means 300 rather than 192 and
+   forms such as ``0x12c`` are rejected, and keep a huge timeout from stopping
+   terminal output
 
 -  Accept only URL-encoded UTF-8 forms, as the page sends, in terminal
    requests

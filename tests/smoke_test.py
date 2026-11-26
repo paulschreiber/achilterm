@@ -142,7 +142,10 @@ def start_server(*options):
 
 
 def check_access():
-    server, port, base = start_server("--allow-host=Terminal.Example.com:443")
+    # Leading zeros don't make a number octal, which would make 0100 less than 90.
+    server, port, base = start_server(
+        "--allow-host=Terminal.Example.com:443", "--timeout=0100"
+    )
     url = f"{base}u"
     try:
         # Only requests from the terminal page.
@@ -189,7 +192,6 @@ def check_access():
         "--timeout=89",
         "--timeout=0x100",
         "--timeout=300.5",
-        f"--timeout={10**9}",
         "--port=abc",
         "--port=",
         "--port=-1",
@@ -207,10 +209,6 @@ def check_access():
         )
         assert result.returncode == 2, (option, result)
         assert b"Traceback" not in result.stderr, (option, result)
-
-    # Leading zeros don't make a number octal, which would make 0100 less than 90.
-    server = start_server("--timeout=0100")[0]
-    terminate(server)
 
 
 def check_escape_sequences():
@@ -354,6 +352,17 @@ def check_unused():
             assert list(app.multi.proc) == [unused, used]
             age(11)
             assert list(app.multi.proc) == [used]
+
+    # However long the timeout, the clock arithmetic copes, both for open
+    # terminals and for the last screens of ended ones.
+    with running_app("read line", timeout=10**400) as app:
+        ended, running = new_app_session(app), new_app_session(app)
+        for session in (ended, running):
+            assert post(app, session).status_code == 200
+        post(app, ended, "\r")
+        assert wait_until(lambda: ended in app.multi.last_screens)
+        app.multi.expire()
+        assert list(app.multi.proc) == [running], app.multi.proc
 
 
 def check_output_fault():
