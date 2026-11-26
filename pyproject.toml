@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.13.10,<0.14"]
+build-backend = "uv_build"
 
 [project]
 name = "achilterm-ng"
-dynamic = ["version"]
+version = "0.30"
 description = "A lightweight UTF-8 web based terminal, forked from Achilterm"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -42,15 +42,9 @@ Issues = "https://github.com/paulschreiber/achilterm/issues"
 [project.scripts]
 achilterm = "achilterm.achilterm:main"
 
-[tool.setuptools]
-packages = ["achilterm"]
-
-[tool.setuptools.package-data]
-achilterm = ["*.js", "*.html", "*.css"]
-
-[tool.setuptools.data-files]
-"share/man/man1" = ["achilterm.1"]
-
-[tool.setuptools.dynamic]
-# Read from the source without importing it, so building needs no dependencies.
-version = { attr = "achilterm.achilterm.__version__" }
+[tool.uv.build-backend]
+module-name = "achilterm"
+module-root = ""
+# Installed relative to the environment's prefix, for the man page.
+data = { data = "data" }
+source-include = ["achilterm.service", "img/**", "tests/**"]
