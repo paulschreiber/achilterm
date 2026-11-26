@@ -23,6 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import array
+import codecs
 import contextlib
 import fcntl
 import glob
@@ -60,6 +61,9 @@ class Terminal:
     def __init__(self, width=80, height=24):
         self.width = width
         self.height = height
+        # Output arrives in arbitrary chunks, which can split a character, and
+        # programs may write bytes that aren't UTF-8.
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self.init()
         self.reset()
 
@@ -381,7 +385,7 @@ class Terminal:
 
     # 		if self.buf=='': print "ESC %r\n"%e
     def write(self, s):
-        s = s.decode("utf-8")
+        s = self.decoder.decode(s)
         for i in s:
             if len(self.buf) or (i in self.esc_seq):
                 self.buf += i
@@ -550,9 +554,9 @@ class Multiplex:
             t = self.proc[fd]["term"]
             t.write(os.read(fd, 65536))
             reply = t.read()
-            if reply:
-                os.write(fd, reply)
             self.proc[fd]["time"] = time.time()
+            if reply:
+                self.proc_write(fd, reply)
         except (KeyError, OSError):
             self.proc_kill(fd)
 

@@ -50,6 +50,17 @@ def main():
         # POST, as the browser does, so that large input fits.
         return fetch(f"{base}u", query.encode())
 
+    def expect(session, keys, pattern):
+        """Send keys, then wait until the screen matches the pattern."""
+        for attempt in range(50):
+            # A response only holds the screen when it has changed, so check
+            # every one, including the response to the keys.
+            screen = terminal(session, keys if attempt == 0 else "")
+            if re.search(pattern, re.sub(r"<[^>]+>", "", screen)):
+                return
+            time.sleep(0.1)
+        raise AssertionError(f"{pattern!r} never appeared: {screen}")
+
     try:
         for attempt in range(50):
             try:
@@ -80,10 +91,7 @@ def main():
             terminal("first", "exit\r")
             time.sleep(1)
             terminal("first")
-            terminal("second", "echo marker$((40+2))\r")
-            time.sleep(1)
-            screen = terminal("second", " ")
-            assert "marker42" in screen, screen
+            expect("second", "echo marker$((40+2))\r", "marker42")
             terminal("third")
 
             # A large paste must arrive complete.
@@ -91,14 +99,22 @@ def main():
                 "third", "stty raw -echo; echo ready; head -c $((50000*2)) | wc -c\r"
             )
             time.sleep(1)
-            terminal("third", "x" * 100000)
-            for attempt in range(50):
-                time.sleep(0.1)
-                screen = terminal("third", " ")
-                if "100000" in re.sub(r"<[^>]+>", "", screen):
-                    break
-            else:
-                raise AssertionError(f"large input was cut off: {screen}")
+            expect("third", "x" * 100000, "100000")
+
+            # Split characters, invalid bytes and terminal queries in the output
+            # must not stop screen updates for any session.
+            terminal("fourth")
+            expect(
+                "fourth",
+                "printf '\\303'; sleep 0.5; printf '\\251 \\377\\n'; echo ok$((5+5))\r",
+                "ok10",
+            )
+            expect(
+                "fourth",
+                "stty raw -echo; printf '\\033[c'; head -c 5 | od -An -c; stty sane\r",
+                r"\[\s+\?\s+6\s+c",
+            )
+            expect("second", "echo still$((6+6))\r", "still12")
     finally:
         server.terminate()
         errors = server.communicate(timeout=10)[1].decode()
