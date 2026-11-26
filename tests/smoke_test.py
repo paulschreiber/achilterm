@@ -180,8 +180,7 @@ def check_access():
         with urllib.request.urlopen(base, timeout=10) as response:
             assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
     finally:
-        server.terminate()
-        errors = server.communicate(timeout=10)[1].decode()
+        errors = terminate(server)[1].decode()
     assert "Traceback" not in errors, errors
 
     for option in (
@@ -718,18 +717,32 @@ def check_announcement():
     finally:
         terminate(server)
 
-    # Nothing reads its output.
+    # Its output goes nowhere, or isn't being read and has no room.
     reader, writer = os.pipe()
     os.close(reader)
+    check_unwritten_announcement(writer)
+    reader, writer = os.pipe()
+    os.set_blocking(writer, False)
+    with contextlib.suppress(BlockingIOError):
+        while True:
+            os.write(writer, b"x" * 4096)
+    os.set_blocking(writer, True)
+    try:
+        check_unwritten_announcement(writer)
+    finally:
+        os.close(reader)
+
+
+def check_unwritten_announcement(output):
+    """A server whose standard output can't take its address still serves."""
     port = free_port()
     server = subprocess.Popen(
-        [COMMAND, f"--port={port}"], stdout=writer, stderr=subprocess.PIPE
+        [COMMAND, f"--port={port}"], stdout=output, stderr=subprocess.PIPE
     )
-    os.close(writer)
+    os.close(output)
     try:
-        url = f"http://127.0.0.1:{port}/"
         assert wait_until(lambda: not connection_refused(port)), "not listening"
-        assert "Achilterm" in fetch(url)
+        assert "Achilterm" in fetch(f"http://127.0.0.1:{port}/")
     finally:
         errors = terminate(server)[1].decode()
     assert server.returncode == 0 and not errors, (server.returncode, errors)
@@ -873,8 +886,7 @@ def main():
             colors = set(re.findall(r'class="f(\d+) b(\d+)"', screen))
             assert colors <= {("7", "0"), ("7", "1")}, colors
     finally:
-        server.terminate()
-        errors = server.communicate(timeout=10)[1].decode()
+        errors = terminate(server)[1].decode()
 
     assert "Traceback" not in errors, errors
     check_access()
