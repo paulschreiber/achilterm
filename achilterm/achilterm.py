@@ -50,6 +50,7 @@ from urllib.parse import urlsplit
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 import webob
+from webob.request import DisconnectionError
 
 try:
     __version__ = metadata.version("achilterm-ng")
@@ -904,13 +905,18 @@ class AchilTerm:
         # is never given.
         if "X-Achilterm" not in req.headers:
             return refuse(403, "Missing X-Achilterm header. Reload the page.")
-        # The page sends a plain form in UTF-8. Reading anything else can fail, or
-        # give uploaded files where text is expected.
+        # The page sends a URL-encoded form in UTF-8. Reading other kinds can fail,
+        # or give uploaded files where text is expected.
         form = "application/x-www-form-urlencoded"
         if (req.content_type, req.charset) != (form, "UTF-8"):
-            return refuse(415, "Send a UTF-8 form. Reload the page.")
+            return refuse(415, "Send a URL-encoded UTF-8 form. Reload the page.")
+        try:
+            fields = req.POST
+        except DisconnectionError:
+            # The page tries again after this status.
+            return refuse(408, "The request was cut off.")
         # Only an empty session ID asks for a new terminal, not a missing one.
-        if "s" not in req.POST:
+        if "s" not in fields:
             return refuse(400, "Missing session ID. Reload the page.")
         return None
 
