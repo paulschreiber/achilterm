@@ -23,7 +23,12 @@ from xml.etree import ElementTree
 
 import webob
 
-from achilterm.achilterm import MINIMUM_TIMEOUT, AchilTerm, Terminal
+from achilterm.achilterm import (
+    MINIMUM_TIMEOUT,
+    STOP_SIGNALS,
+    AchilTerm,
+    Terminal,
+)
 
 COMMAND = os.path.join(os.path.dirname(sys.executable), "achilterm")
 
@@ -423,17 +428,23 @@ def check_cleanup():
     assert not app.multi.proc
 
 
-def check_stop(stop):
+def check_stop(stop, ignored_by_command="HUP"):
     """Stopping the server with a signal closes its terminals."""
     command = (
-        "grep SigIgn /proc/self/status; trap '' HUP; echo \"pid $$\"; exec sleep 60"
+        f"grep -E '^Sig(Ign|Blk)' /proc/self/status; trap '' {ignored_by_command};"
+        ' echo "pid $$"; exec sleep 60'
     )
-    # The server leaves a signal alone if it inherits ignoring it.
-    inherited = signal.signal(stop, signal.SIG_DFL)
+    # The server leaves a signal alone if it inherits ignoring it, as it does
+    # SIGQUIT here, though its commands mustn't.
+    inherited = {
+        stop: signal.signal(stop, signal.SIG_DFL),
+        signal.SIGQUIT: signal.signal(signal.SIGQUIT, signal.SIG_IGN),
+    }
     try:
         server, port, base = start_server(f"--command={command}")
     finally:
-        signal.signal(stop, inherited)
+        for signum, handler in inherited.items():
+            signal.signal(signum, handler)
 
     def send(session, keys):
         return fetch(f"{base}u", terminal_query(session, keys))
@@ -442,18 +453,25 @@ def check_stop(stop):
         show = functools.partial(send, new_session(f"{base}u"))
         screen = screen_text(wait_for_screen(show, "", "pid [0-9]+"))
         pid = int(re.search("pid ([0-9]+)", screen)[1])
-        # The command doesn't ignore broken pipes, oversized files or Ctrl-\\.
-        ignored = int(re.search("SigIgn:\\s+([0-9a-f]+)", screen)[1], 16)
-        for signum in (signal.SIGPIPE, signal.SIGXFSZ, signal.SIGQUIT):
-            assert not ignored >> (signum - 1) & 1, (signum, hex(ignored))
+        # The command ignores and blocks no signals, whatever the server does.
+        for name in ("SigIgn", "SigBlk"):
+            mask = int(re.search(f"{name}:\\s+([0-9a-f]+)", screen)[1], 16)
+            for signum in (*STOP_SIGNALS, signal.SIGQUIT, signal.SIGPIPE):
+                assert not mask >> (signum - 1) & 1, (name, signum, hex(mask))
         # A second server can't use the same port, and mustn't hang.
         second = subprocess.run(
             [COMMAND, f"--port={port}"], check=False, capture_output=True, timeout=10
         )
         assert second.returncode != 0, second
-        # More signals while it stops mustn't cut that short or cause errors.
-        for signum in (stop, signal.SIGTERM, stop):
-            server.send_signal(signum)
+        server.send_signal(stop)
+        # More signals, including while it waits to kill a command, mustn't cut
+        # that short or cause errors.
+        for attempt in range(20):
+            for signum in STOP_SIGNALS:
+                server.send_signal(signum)
+            if server.poll() is not None:
+                break
+            time.sleep(0.05)
         errors = server.communicate(timeout=10)[1].decode()
         assert server.returncode == 0, (stop, server.returncode, errors)
         assert "Traceback" not in errors, errors
@@ -599,8 +617,10 @@ def main():
     check_unused()
     check_output_fault()
     check_processes()
-    for stop in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        check_stop(stop)
+    check_stop(signal.SIGINT)
+    check_stop(signal.SIGHUP)
+    # Only killing ends this command, which takes the server several seconds.
+    check_stop(signal.SIGTERM, "HUP TERM")
     check_many_descriptors()
     print("smoke test passed")
 
