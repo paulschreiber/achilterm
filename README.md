@@ -217,6 +217,9 @@ Changelog
 
 -  Fix large input, such as a long paste, being cut off
 
+-  Fix a security flaw that could connect a tab whose shell had ended to
+   another user's terminal
+
 -  Fix characters beyond Latin-1 showing as other characters, and ignore
    control characters that could stop the screen updating or reorder it; wide
    and combining characters can still shift the rest of a line
