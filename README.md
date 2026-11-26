@@ -233,6 +233,9 @@ Changelog
    the terminal; Alt with Backspace deletes a word in shells such as bash and
    zsh
 
+-  Send typing and show its output promptly, rather than sometimes after up to
+   two seconds
+
 -  Fix large input, such as a long paste, being cut off
 
 -  Fix escape sequences that could stop or stall every terminal, move the
