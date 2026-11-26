@@ -233,9 +233,9 @@ def check_escape_sequences():
             ElementTree.fromstring(term.dumphtml().encode())
 
 
-def post(app, session="", keys=""):
+def post(app, session="", keys="", **extra):
     """Ask an application running here for a terminal's screen."""
-    query = terminal_query(session, keys)
+    query = terminal_query(session, keys, **extra)
     request = webob.Request.blank("/u", headers=PAGE_HEADERS, POST=query)
     return request.get_response(app)
 
@@ -504,6 +504,11 @@ def check_end_of_output():
         session = new_app_session(app)
         # Hold the lock so that only these reads happen.
         with app.multi.lock:
+            # Failing to send input leaves the output still to be read.
+            with mock.patch("os.write", side_effect=OSError):
+                app.multi.proc_write(session, "x")
+            assert session in app.multi.proc, "closed before its output was read"
+            assert not app.multi.proc[session]["input"]
             # Having nothing to read yet isn't the end.
             with mock.patch("os.read", side_effect=BlockingIOError):
                 app.multi.proc_read(session)
@@ -531,29 +536,44 @@ def screens_until_ended(app, session):
 
 def check_last_output():
     """A page receives what a command printed last, then hears that it ended."""
-    with running_app("read x; echo last words") as app:
+
+    def end_command(app):
+        """A session whose command has ended before its page asked again."""
         session = new_app_session(app)
         app.multi.proc_write(session, "\r")
-        assert wait_until(lambda: session not in app.multi.proc), "stayed open"
+        assert wait_until(lambda: session in app.multi.last_screens), "not kept"
+        return session
+
+    with running_app("read x; echo last words") as app:
+        session = end_command(app)
         screens = screens_until_ended(app, session)
         assert len(screens) == 1 and "last words" in screens[0], screens
 
-        # A screen that no page asks for isn't kept for long.
-        with mock.patch("achilterm.achilterm.MINIMUM_TIMEOUT", 0.2):
-            session = new_app_session(app)
-            app.multi.proc_write(session, "\r")
-            assert wait_until(
-                lambda: session not in app.multi.proc | app.multi.last_screens
-            ), "kept"
+        # A page that lost the reply gets the screen again when it asks for it.
+        session = end_command(app)
+        for attempt, extra in enumerate(({}, {"f": 1}, {"f": 1})):
+            response = post(app, session, **extra)
+            assert response.status_code == 200, (attempt, response.status)
+            response.decode_content()
+            assert "last words" in screen_text(response.text), attempt
+        assert post(app, session).status_code == 410
+        assert session not in app.multi.last_screens
+
+        # A screen that no page asks for isn't kept for ever.
+        session = end_command(app)
+        with app.multi.lock:
+            app.multi.last_screens[session]["deadline"] = time.monotonic() - 1
+            app.multi.expire()
+            assert session not in app.multi.last_screens
         assert post(app, session).status_code == 410
 
-    # Failing to send input doesn't lose the output still to be read.
-    with running_app("sleep 30") as app:
-        session = new_app_session(app)
-        with app.multi.lock, mock.patch("os.write", side_effect=OSError):
-            app.multi.proc_write(session, "x")
-            assert session in app.multi.proc, "closed before its output was read"
-            assert not app.multi.proc[session]["input"]
+        # If it can't be drawn, the page is told why the session ended.
+        session = end_command(app)
+        app.multi.last_screens[session]["term"].dumphtml = None
+        with unittest.TestCase().assertLogs("achilterm.achilterm"):
+            response = post(app, session)
+        assert response.status_code == 410, response.status
+        assert "server error" in response.text, response.text
 
 
 def check_failed_start():

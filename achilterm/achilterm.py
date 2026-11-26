@@ -538,8 +538,8 @@ class Multiplex:
         self.proc = {}
         # why a session was closed, by key, when there is a reason to give
         self.close_reasons = {}
-        # the screens of commands that have ended, by key, until their pages ask
-        # for them, each with the time to give up waiting
+        # the last screens of commands that have ended, by key, until their pages
+        # have received them
         self.last_screens = {}
         # when to kill each closed session's process group, until nothing is left
         self.ending = {}
@@ -662,12 +662,20 @@ class Multiplex:
                 events |= selectors.EVENT_WRITE
             selector.register(proc["fd"], events, key)
 
-    def proc_close(self, key, reason=None):
-        """End a session. Its page is told the reason, if one is given."""
+    def proc_close(self, key, reason=None, keep_screen=False):
+        """End a session. Its page is told the reason, if one is given, after
+        receiving the last screen, if that's to be kept."""
         proc = self.proc.pop(key, None)
         if proc:
             if reason:
                 self.close_reasons[key] = reason
+            if keep_screen:
+                # for as long as a slowed page may take to ask
+                self.last_screens[key] = {
+                    "term": proc["term"],
+                    "deadline": time.monotonic() + MINIMUM_TIMEOUT,
+                    "sent": False,
+                }
             with contextlib.suppress(OSError):
                 os.close(proc["fd"])
             with contextlib.suppress(OSError):
@@ -714,27 +722,25 @@ class Multiplex:
                 timeout = min(timeout, MINIMUM_TIMEOUT)
             if proc["seen"] < now - timeout:
                 self.proc_close(key, "because the page was disconnected")
-        for key, (_term, deadline) in list(self.last_screens.items()):
-            if now > deadline:
+        for key, last in list(self.last_screens.items()):
+            if now > last["deadline"]:
                 del self.last_screens[key]
 
     def proc_read(self, key):
+        proc = self.proc.get(key)
+        if proc is None:
+            return
         try:
-            proc = self.proc[key]
             data = os.read(proc["fd"], 65536)
         except BlockingIOError:
             return  # there's nothing to read after all
-        except (KeyError, OSError):
+        except OSError:
             data = b""
         if not data:
             # The command has ended. Reading then fails on Linux, but on macOS and
             # BSD every read returns nothing. Its page may not have seen the last
-            # of its output yet, so keep the screen, as long as a slowed page may
-            # take to ask.
-            if key in self.proc:
-                deadline = time.monotonic() + MINIMUM_TIMEOUT
-                self.last_screens[key] = (self.proc[key]["term"], deadline)
-                self.proc_close(key)
+            # of its output yet, so keep the screen.
+            self.proc_close(key, keep_screen=True)
             return
         try:
             term = proc["term"]
@@ -773,17 +779,24 @@ class Multiplex:
             proc["seen"] = time.monotonic()
             proc["shown"] += 1
             term = proc["term"]
-        elif key in self.last_screens:
-            term = self.last_screens.pop(key)[0]  # sent only once
         else:
-            return False
+            # Send a command's last screen until the page shows that it arrived,
+            # by asking again without wanting the whole screen once more.
+            last = self.last_screens.get(key)
+            if last is None or (last["sent"] and not full):
+                self.last_screens.pop(key, None)
+                return False
+            last["sent"] = True
+            term = last["term"]
         try:
             if full:
                 term.last_html = ""  # send the screen even if it hasn't changed
             return term.dumphtml(color)
         except Exception:
             logger.exception("Closing a terminal whose screen couldn't be drawn")
-            self.proc_close(key, "because of a server error")
+            self.proc_close(key)
+            self.last_screens.pop(key, None)
+            self.close_reasons[key] = "because of a server error"
             return False
 
     def loop(self):
