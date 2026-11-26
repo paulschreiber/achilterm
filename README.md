@@ -226,6 +226,10 @@ Changelog
 
 -  Fix large input, such as a long paste, being cut off
 
+-  Fix escape sequences that could stop every terminal updating, move the
+   cursor off the screen or change the screen's size, including the common
+   "reset scroll region"
+
 -  Use random 128-bit session IDs, and refuse requests from other websites or
    for unknown host names (see ``--allow-host``)
 
