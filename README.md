@@ -217,6 +217,9 @@ Changelog
 
 -  Fix large input, such as a long paste, being cut off
 
+-  Fix output that stopped screen updates for every session, such as a split
+   or invalid character, or a program asking the terminal to identify itself
+
 -  Remove the GET option, which could record keystrokes in server logs;
    keystrokes are now accepted only in POST requests
 
