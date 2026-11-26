@@ -1,0 +1,26 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+        name: Enforce end of file format
+        exclude: '\.svg$|\.html$'
+
+      - id: trailing-whitespace
+        name: Enforce removal of trailing whitespace
+        exclude: '\.snap$'
+
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+      - id: fix-byte-order-marker
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Keep in step with the Ruff version in pyproject.toml.
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+        # old_install holds unmaintained Python 2 scripts.
+        exclude: '^old_install/'
+      - id: ruff-format
+        exclude: '^old_install/'
