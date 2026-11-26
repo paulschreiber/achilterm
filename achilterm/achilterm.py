@@ -22,8 +22,6 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-__version__ = "0.30"
-
 import array
 import contextlib
 import fcntl
@@ -43,12 +41,19 @@ import sys
 import termios
 import threading
 import time
+from importlib import metadata
 from io import BytesIO
 from socket import gethostname
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 import webob
+
+try:
+    __version__ = metadata.version("achilterm-ng")
+except metadata.PackageNotFoundError:
+    # Running from a source checkout without installing.
+    __version__ = "unknown"
 
 
 class Terminal:

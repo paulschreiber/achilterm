@@ -63,6 +63,10 @@ To run the same checks, plus file cleanup, automatically before each commit:
 After changing dependencies in ``pyproject.toml``, update ``uv.lock`` with
 ``uv lock`` and commit both files.
 
+The version number is set in ``pyproject.toml``. To change it, run
+``uv version`` with the new number, which also updates ``uv.lock``, and
+update the man page and changelog.
+
 Running
 -------
 

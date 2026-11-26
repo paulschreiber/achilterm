@@ -8,6 +8,7 @@ resolution-markers = [
 
 [[package]]
 name = "achilterm-ng"
+version = "0.30"
 source = { editable = "." }
 dependencies = [
     { name = "webob" },
