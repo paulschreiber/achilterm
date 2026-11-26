@@ -777,8 +777,15 @@ def check_sizes():
     assert requested_size({}) == usual
 
     # The page's settings are checked the same way, and may have leading zeros.
-    for options in ({"width": 256}, {"height": 2}, {"width": None}):
-        with unittest.TestCase().assertRaisesRegex(ValueError, "must be a number"):
+    for options in (
+        {"width": 256},
+        {"height": 2},
+        {"width": None},
+        {"width": 80.5},
+        {"height": float("inf")},
+        {"width": "0x50"},
+    ):
+        with unittest.TestCase().assertRaisesRegex(ValueError, "must be a whole"):
             AchilTerm(**options)
     with running_app("sleep 30", width="0100", height="030") as app:
         page = webob.Request.blank("/").get_response(app).text

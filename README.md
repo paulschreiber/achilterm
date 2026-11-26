@@ -238,7 +238,8 @@ Changelog
 
 -  Reject a ``--width`` or ``--height`` that can't be used, instead of ignoring
    it or serving a blank page, and fix a server error for a request with a size
-   that isn't a number
+   that isn't a number; sizes are now read as decimal, so forms such as ``0x50``
+   are rejected and ``0120`` means 120
 
 -  Fix large input, such as a long paste, being cut off
 
