@@ -1,12 +1,14 @@
 """Start the installed achilterm command and exercise it over HTTP."""
 
 import contextlib
+import ctypes
 import functools
 import gzip
 import os
 import random
 import re
 import resource
+import signal
 import socket
 import subprocess
 import sys
@@ -356,11 +358,25 @@ def wait_until(condition, seconds=5):
 
 def check_processes():
     """Closed terminals leave no processes behind, even ones that won't end."""
+    # Have orphans come to this process, as they do to the first in a container,
+    # so that they must be collected too.
+    prctl = ctypes.CDLL(None).prctl
+    set_child_subreaper = 36
+    assert prctl(set_child_subreaper, 1, 0, 0, 0) == 0
+    try:
+        with mock.patch("achilterm.achilterm.KILL_DELAY", 1):
+            check_cleanup()
+    finally:
+        prctl(set_child_subreaper, 0, 0, 0, 0)
+
+
+def check_cleanup():
     command = """read mode
         [ $mode = exit ] && exit
         [ $mode = stubborn ] && trap '' HUP TERM
-        if [ $mode = child ]; then (trap '' HUP TERM; exec sleep 60) &
-        else sleep 60 & fi
+        [ $mode = child ] && trap '' HUP TERM
+        sleep 60 &
+        [ $mode = child ] && trap - HUP TERM
         echo "child $!"; wait"""
 
     def start(app, mode):
@@ -376,58 +392,63 @@ def check_processes():
         with app.multi.lock:
             app.multi.proc_close(session)
 
-    def gone(pid, child):
-        # The command's child is collected by whichever process adopts it.
-        return is_collected(pid) and not is_running(child)
+    def ends(pid, child, seconds=5):
+        return wait_until(
+            lambda: is_collected(pid) and not is_running(child), seconds=seconds
+        )
 
-    with mock.patch("achilterm.achilterm.KILL_DELAY", 1):
-        with running_app(command) as app:
-            session = new_app_session(app)
-            pid = app.multi.proc[session]["pid"]
-            post(app, session, "exit\r")
-            assert wait_until(lambda: is_collected(pid)), "exited"
+    with running_app(command) as app:
+        session = new_app_session(app)
+        pid = app.multi.proc[session]["pid"]
+        post(app, session, "exit\r")
+        assert wait_until(functools.partial(is_collected, pid)), "exited"
 
-            session, pid, child = start(app, "ordinary")
+        session, pid, child = start(app, "ordinary")
+        close(app, session)
+        assert ends(pid, child), "closed"
+
+        # The command, or only something it started, ignores signals.
+        for mode in ("stubborn", "child"):
+            session, pid, child = start(app, mode)
             close(app, session)
-            assert wait_until(lambda: gone(pid, child)), "closed"
+            time.sleep(0.3)
+            assert is_running(child), f"{mode}: killed too soon"
+            assert ends(pid, child), f"{mode}: survived"
+        assert wait_until(lambda: not app.multi.ending), app.multi.ending
 
-            # Either the command or only something it started ignores signals.
-            for mode in ("stubborn", "child"):
-                session, pid, child = start(app, mode)
-                close(app, session)
-                time.sleep(0.3)
-                assert is_running(child), f"{mode}: killed too soon"
-                ended = functools.partial(gone, pid, child)
-                assert wait_until(ended), f"{mode}: survived"
-            assert wait_until(lambda: not app.multi.ending), app.multi.ending
-
-            session, pid, child = start(app, "stubborn")
-        # Stopping the server ends them too, and no more are started.
-        assert wait_until(lambda: gone(pid, child), 1), "outlived the server"
-        assert post(app).status_code == 503
-        assert not app.multi.proc
+        session, pid, child = start(app, "stubborn")
+    # Stopping the server ends them too, and no more are started.
+    assert ends(pid, child, 1), "outlived the server"
+    assert post(app).status_code == 503
+    assert not app.multi.proc
 
 
-def check_stop():
-    """Stopping the server with kill closes its terminals."""
-    command = "trap '' HUP; echo \"pid $$\"; exec sleep 60"
+def check_stop(stop):
+    """Stopping the server with a signal closes its terminals."""
+    command = (
+        "grep SigIgn /proc/self/status; trap '' HUP; echo \"pid $$\"; exec sleep 60"
+    )
     server, port, base = start_server(f"--command={command}")
+
+    def send(session, keys):
+        return fetch(f"{base}u", terminal_query(session, keys))
+
     try:
-        session = new_session(f"{base}u")
-
-        def send(keys):
-            return fetch(f"{base}u", terminal_query(session, keys))
-
-        screen = wait_for_screen(send, "", "pid [0-9]+")
-        pid = int(re.search("pid ([0-9]+)", screen_text(screen))[1])
+        show = functools.partial(send, new_session(f"{base}u"))
+        screen = screen_text(wait_for_screen(show, "", "pid [0-9]+"))
+        pid = int(re.search("pid ([0-9]+)", screen)[1])
+        # The command doesn't ignore broken pipes or oversized files.
+        ignored = int(re.search("SigIgn:\\s+([0-9a-f]+)", screen)[1], 16)
+        for signum in (signal.SIGPIPE, signal.SIGXFSZ):
+            assert not ignored >> (signum - 1) & 1, (signum, hex(ignored))
         # A second server can't use the same port, and mustn't hang.
         second = subprocess.run(
             [COMMAND, f"--port={port}"], check=False, capture_output=True, timeout=10
         )
         assert second.returncode != 0, second
-        server.terminate()
-        assert server.wait(10) == 0, server.returncode
-        assert wait_until(lambda: not is_running(pid)), "outlived the server"
+        server.send_signal(stop)
+        assert server.wait(10) == 0, (stop, server.returncode)
+        assert wait_until(lambda: not is_running(pid)), f"outlived {stop!r}"
     finally:
         server.kill()
         server.communicate(timeout=10)
@@ -569,7 +590,8 @@ def main():
     check_unused()
     check_output_fault()
     check_processes()
-    check_stop()
+    for stop in (signal.SIGTERM, signal.SIGHUP):
+        check_stop(stop)
     check_many_descriptors()
     print("smoke test passed")
 

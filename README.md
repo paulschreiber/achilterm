@@ -230,8 +230,11 @@ Changelog
    and connections open
 
 -  Clean up the processes of closed terminals, including when Achilterm is
-   stopped, killing anything left in a command's process group after five
-   seconds
+   stopped: ask everything in a command's process group to end, and kill what
+   remains after five seconds; a job meant to outlive its terminal needs
+   ``setsid``
+
+-  Start commands with the usual handling of broken pipes and other signals
 
 -  Exit, rather than hang, when the port is already in use
 
