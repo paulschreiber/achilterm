@@ -8,11 +8,12 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	// of the server this page is talking to.
 	var params=new URLSearchParams({s: sid, w: width, h: height, c: 1, i: ''});
 	var timeout;
-	var error_timeout;
 	// typed or pasted, and not yet sent
 	var keybuf='';
 	var sending=0;
+	// retrying after a lost connection, or refused by the server for good
 	var retrying=false;
+	var refused=false;
 	var rmax=1;
 
 	var div=document.getElementById(id);
@@ -24,11 +25,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	var dterm=document.createElement('div');
 
 	function debug(s) {
-		sdebug.innerHTML=s;
-	}
-	function error() {
-		sled.className='off';
-		debug(`Connection lost timeout ts:${(new Date).getTime()}`);
+		sdebug.textContent=s;
 	}
 	function opt_add(opt,name) {
 		opt.className='off';
@@ -37,6 +34,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		dstat.appendChild(document.createTextNode(' '));
 	}
 	function do_color(event) {
+		if(refused)
+			return;
 		var o=opt_color.className=(opt_color.className=='off')?'on':'off';
 		if(o=='on')
 			params.set('c',1);
@@ -45,6 +44,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		debug(`Color ${opt_color.className}`);
 	}
 	function do_paste(event) {
+		if(refused)
+			return;
 		// Browsers only offer the clipboard to pages served over HTTPS or from localhost.
 		if (!navigator.clipboard || !navigator.clipboard.readText) {
 			debug('Paste needs HTTPS or localhost');
@@ -53,8 +54,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		navigator.clipboard.readText().then(function(text) {
 			if (text) {
 				// Send line breaks as the Enter key does.
-				queue(text.replace(/\r?\n/g, '\r'));
-				debug('Pasted');
+				if(queue(text.replace(/\r?\n/g, '\r')))
+					debug('Pasted');
 			}
 		}, function() {
 			debug('Clipboard access was denied');
@@ -68,17 +69,24 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			var r=new XMLHttpRequest();
 			params.set('k',keybuf);
 			keybuf='';
+			// After a lost response, ask for the whole screen again.
+			if(retrying)
+				params.set('f',1);
+			else
+				params.delete('f');
 			r.open("POST","u",true);
+			// A request that gets no answer fails, and is tried again.
+			r.timeout=15000;
 			// Shows the server that this request comes from its own page.
 			r.setRequestHeader('X-Achilterm','1');
 			r.onreadystatechange = function () {
 //				debug("xhr:"+((new Date).getTime())+" state:"+r.readyState+" status:"+r.status+" statusText:"+r.statusText);
 				if (r.readyState==4) {
-					window.clearTimeout(error_timeout);
-					if(r.status==200) {
+					sled.className='off';
+					if(r.status==200 && r.responseXML) {
 						if(retrying) {
 							retrying=false;
-							debug('');
+							debug('Reconnected. Check the last command: some input may be lost.');
 						}
 						params.set('i',r.getResponseHeader('X-Achilterm-Instance') || '');
 						var de=r.responseXML.documentElement;
@@ -91,32 +99,35 @@ achilterm.Terminal_ctor=function(id,width,height) {
 								rmax=2000;
 						}
 						sending=0;
-						sled.className='off';
 						timeout=window.setTimeout(update,rmax);
-					} else if(r.status==0 || r.status>=500) {
-						// The server or the connection may only be away briefly.
+					} else if([0,200,408,429].includes(r.status) || r.status>=500) {
+						// The server or the connection may only be away briefly. Sending
+						// part of what was typed could run the wrong command, so drop it.
 						retrying=true;
+						keybuf='';
 						sending=0;
-						sled.className='off';
-						debug(`Connection lost, retrying. Status:${r.status}`);
+						debug(`Connection lost, retrying. Typing is ignored. Status:${r.status}`);
 						timeout=window.setTimeout(update,2000);
 					} else {
 						// The server refused this page, and would again.
-						sled.className='off';
-						sdebug.textContent=r.responseText || `Connection error status:${r.status}`;
+						refused=true;
+						debug(r.responseText || `Connection error status:${r.status}`);
 					}
 				}
 			}
-			error_timeout=window.setTimeout(error,5000);
 			r.send(params);
 		}
 	}
+	// Returns whether the input will be sent.
 	function queue(s) {
+		if(retrying || refused)
+			return false;
 		keybuf+=s;
 		if(sending==0) {
 			window.clearTimeout(timeout);
 			timeout=window.setTimeout(update,1);
 		}
+		return true;
 	}
 	// Keys that don't type a character, and what a Linux console sends for them.
 	var special_keys={

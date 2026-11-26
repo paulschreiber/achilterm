@@ -233,7 +233,8 @@ Changelog
 
 -  Don't let other websites show the terminal in a frame
 
--  Retry after a lost connection, and show why a page was refused
+-  Retry after a lost connection, ignoring typing until it returns, and show
+   why a page was refused
 
 -  Fix a security flaw that could connect a tab whose shell had ended to
    another user's terminal
