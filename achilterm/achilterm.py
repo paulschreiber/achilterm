@@ -60,6 +60,8 @@ except metadata.PackageNotFoundError:
     # Running from a source checkout without installing.
     __version__ = "unknown"
 
+logger = logging.getLogger(__name__)
+
 
 # A screen cell holds a character in its low 24 bits, which is enough for any
 # Unicode character, below its colors: 0xBBFF, a byte each for background and
@@ -127,9 +129,6 @@ def refuse(status, message, **headers):
     response = webob.Response(text=message, status=status, content_type="text/plain")
     response.headers.update(headers)
     return response
-
-
-logger = logging.getLogger(__name__)
 
 
 def clamp(value, low, high):
@@ -224,17 +223,20 @@ class Terminal:
         z = array.array("q", [BLANK]) * w
         self.scr[self.width * y1 + x1 : self.width * y2 + x2 + 1] = z
 
-    def scroll_up(self, y1, y2):
-        self.poke(y1, 0, self.peek(y1 + 1, 0, y2, self.width))
-        self.zero(y2, 0, y2, self.width - 1)
+    # Each of these moves n cells or rows at once, where n is no more than there
+    # are from the starting point to the end of the row or region.
 
-    def scroll_down(self, y1, y2):
-        self.poke(y1 + 1, 0, self.peek(y1, 0, y2 - 1, self.width))
-        self.zero(y1, 0, y1, self.width - 1)
+    def scroll_up(self, y1, y2, n=1):
+        self.poke(y1, 0, self.peek(y1 + n, 0, y2, self.width))
+        self.zero(y2 - n + 1, 0, y2, self.width - 1)
 
-    def scroll_right(self, y, x):
-        self.poke(y, x + 1, self.peek(y, x, y, self.width - 1))
-        self.zero(y, x, y, x)
+    def scroll_down(self, y1, y2, n=1):
+        self.poke(y1 + n, 0, self.peek(y1, 0, y2 - n, self.width))
+        self.zero(y1, 0, y1 + n - 1, self.width - 1)
+
+    def scroll_right(self, y, x, n):
+        self.poke(y, x + n, self.peek(y, x, y, self.width - n))
+        self.zero(y, x, y, x + n - 1)
 
     def cursor_down(self):
         if self.cy >= self.st and self.cy <= self.sb:
@@ -313,8 +315,7 @@ class Terminal:
     # 		else:
     # 			print 'csi ignore',c,l
     def csi_at(self, l):
-        for i in range(l[0]):
-            self.scroll_right(self.cy, self.cx)
+        self.scroll_right(self.cy, self.cx, min(l[0], self.width - self.cx))
 
     def csi_A(self, l):
         self.cy = max(self.st, self.cy - l[0])
@@ -367,14 +368,12 @@ class Terminal:
             self.zero(self.cy, 0, self.cy, self.width - 1)
 
     def csi_L(self, l):
-        for i in range(l[0]):
-            if self.cy < self.sb:
-                self.scroll_down(self.cy, self.sb)
+        if self.cy < self.sb:
+            self.scroll_down(self.cy, self.sb, min(l[0], self.sb - self.cy + 1))
 
     def csi_M(self, l):
         if self.cy >= self.st and self.cy <= self.sb:
-            for i in range(l[0]):
-                self.scroll_up(self.cy, self.sb)
+            self.scroll_up(self.cy, self.sb, min(l[0], self.sb - self.cy + 1))
 
     def csi_P(self, l):
         w, cx, cy = self.width, self.cx, self.cy
@@ -384,7 +383,7 @@ class Terminal:
 
     def csi_X(self, l):
         # erase this many characters, at least one, without leaving the row
-        last = min(self.cx + max(l[0], 1), self.width) - 1
+        last = clamp(self.cx + l[0], self.cx + 1, self.width) - 1
         self.zero(self.cy, self.cx, self.cy, last)
 
     def csi_a(self, l):
@@ -432,10 +431,12 @@ class Terminal:
     # 				print "CSI sgr ignore",l,i
     # 		print 'sgr: %r %x'%(l,self.sgr)
     def csi_r(self, l):
-        if len(l) < 2:
-            l = [1, self.height]  # the whole screen
-        self.st = clamp(l[0], 1, self.height) - 1
-        self.sb = clamp(l[1], self.st + 1, self.height) - 1
+        # A missing or zero number means the first or last row.
+        top, bottom = (l + [0])[:2]
+        top = clamp(top, 1, self.height)
+        bottom = min(bottom or self.height, self.height)
+        if top < bottom:  # otherwise the sequence is invalid, and ignored
+            self.st, self.sb = top - 1, bottom - 1
 
     def csi_s(self, l):
         self.esc_save(0)
@@ -538,7 +539,7 @@ class Multiplex:
         self.proc = {}
         self.key_counter = itertools.count(1)
         # why a session was closed, by key, for those whose page should be told
-        self.closed = {}
+        self.close_reasons = {}
         self.lock = threading.RLock()
         self.thread = threading.Thread(target=self.loop)
         self.alive = 1
@@ -617,9 +618,12 @@ class Multiplex:
         """Map each session's file descriptor to its key."""
         return {proc["fd"]: key for key, proc in self.proc.items()}
 
-    def proc_close(self, key):
+    def proc_close(self, key, reason=None):
+        """End a session. Its page is told the reason, if one is given."""
         proc = self.proc.pop(key, None)
         if proc:
+            if reason:
+                self.close_reasons[key] = reason
             try:
                 os.close(proc["fd"])
                 os.kill(proc["pid"], signal.SIGTERM)
@@ -631,26 +635,25 @@ class Multiplex:
         cutoff = time.monotonic() - self.timeout
         for key, proc in list(self.proc.items()):
             if proc["seen"] < cutoff:
-                self.proc_close(key)
-                self.closed[key] = (
-                    "This terminal was closed because the page was disconnected."
-                )
+                self.proc_close(key, "because the page was disconnected")
 
     def proc_read(self, key):
         try:
             proc = self.proc[key]
-            t = proc["term"]
-            t.write(os.read(proc["fd"], 65536))
-            reply = t.read()
-            if reply:
-                self.proc_write(key, reply)
+            data = os.read(proc["fd"], 65536)
         except (KeyError, OSError):
             self.proc_close(key)
+            return
+        try:
+            term = proc["term"]
+            term.write(data)
+            reply = term.read()
+            if reply:
+                self.proc_write(key, reply)
         except Exception:
-            # A fault in handling one terminal's output mustn't stop the others.
+            # A fault in one terminal mustn't stop the others.
             logger.exception("Closing a terminal whose output couldn't be handled")
-            self.proc_close(key)
-            self.closed[key] = "This terminal was closed because of a server error."
+            self.proc_close(key, "because of a server error")
 
     def proc_write(self, key, s):
         if key in self.proc:
@@ -674,13 +677,18 @@ class Multiplex:
         return {proc["fd"]: key for key, proc in self.proc.items() if proc["input"]}
 
     def dump(self, key, color=1, full=False):
+        proc = self.proc.get(key)
+        if proc is None:
+            return False
+        proc["seen"] = time.monotonic()
         try:
-            self.proc[key]["seen"] = time.monotonic()
-            term = self.proc[key]["term"]
+            term = proc["term"]
             if full:
                 term.last_html = ""  # send the screen even if it hasn't changed
             return term.dumphtml(color)
-        except KeyError:
+        except Exception:
+            logger.exception("Closing a terminal whose screen couldn't be drawn")
+            self.proc_close(key, "because of a server error")
             return False
 
     def loop(self):
@@ -784,13 +792,15 @@ class AchilTerm:
             time.sleep(0.002)
             # A page that lost a response asks for the whole screen again.
             dump = self.multi.dump(term, c, bool(req.POST.get("f")))
-            if dump is False and term in self.multi.closed:
+            if dump is False and (reason := self.multi.close_reasons.get(term)):
                 # Don't quietly start another terminal: the person may go on
                 # typing as if it were the one that was closed.
-                reason = self.multi.closed[term]
-                return refuse(410, f"{reason} Reload the page to start a new one.")(
-                    environ, start_response
+                refused = refuse(
+                    410,
+                    f"This terminal was closed {reason}. "
+                    "Reload the page to start a new one.",
                 )
+                return refused(environ, start_response)
             res.content_type = "text/xml"
             res.headers["X-Achilterm-Instance"] = self.instance
             if isinstance(dump, str):
