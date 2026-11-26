@@ -230,6 +230,8 @@ Changelog
 
 -  Update the Apache example for Apache 2.4
 
+-  Document the missing options in the man page and fix its layout
+
 -  Move the project to GitHub
 
 Old versions
