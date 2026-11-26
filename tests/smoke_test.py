@@ -187,6 +187,13 @@ def check_access():
 
     for option in (
         "--timeout=89",
+        "--timeout=0x100",
+        "--timeout=300.5",
+        f"--timeout={10**9}",
+        "--port=abc",
+        "--port=",
+        "--port=-1",
+        "--port=65536",
         "--width=abc",
         "--width=2",
         "--height=100",
@@ -199,6 +206,11 @@ def check_access():
             [COMMAND, option], capture_output=True, timeout=10, check=False
         )
         assert result.returncode == 2, (option, result)
+        assert b"Traceback" not in result.stderr, (option, result)
+
+    # Leading zeros don't make a number octal, which would make 0100 less than 90.
+    server = start_server("--timeout=0100")[0]
+    terminate(server)
 
 
 def check_escape_sequences():
