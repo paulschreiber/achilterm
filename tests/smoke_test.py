@@ -428,6 +428,14 @@ def check_cleanup():
     assert not app.multi.proc
 
 
+def connection_refused(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            return False
+    except ConnectionRefusedError:
+        return True
+
+
 def check_stop(stop, ignored_by_command="HUP"):
     """Stopping the server with a signal closes its terminals."""
     command = (
@@ -456,7 +464,8 @@ def check_stop(stop, ignored_by_command="HUP"):
         # The command ignores and blocks no signals, whatever the server does.
         for name in ("SigIgn", "SigBlk"):
             mask = int(re.search(f"{name}:\\s+([0-9a-f]+)", screen)[1], 16)
-            for signum in (*STOP_SIGNALS, signal.SIGQUIT, signal.SIGPIPE):
+            others = (signal.SIGQUIT, signal.SIGPIPE, signal.SIGXFSZ)
+            for signum in (*STOP_SIGNALS, *others):
                 assert not mask >> (signum - 1) & 1, (name, signum, hex(mask))
         # A second server can't use the same port, and mustn't hang.
         second = subprocess.run(
@@ -464,6 +473,10 @@ def check_stop(stop, ignored_by_command="HUP"):
         )
         assert second.returncode != 0, second
         server.send_signal(stop)
+        if "TERM" in ignored_by_command:
+            # While it waits to kill the command, the server takes no connections.
+            refused = functools.partial(connection_refused, port)
+            assert wait_until(refused, 2) and server.poll() is None, "still listening"
         # More signals, including while it waits to kill a command, mustn't cut
         # that short or cause errors.
         for attempt in range(20):

@@ -564,7 +564,15 @@ class Multiplex:
         """Start a terminal and return its session ID, or None while stopping."""
         if not self.alive:
             return None
-        pid, fd = pty.fork()
+        # Hold signals back while forking, so that the child handles none as this
+        # process, or one that includes this application, would.
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, signal.valid_signals())
+        pid = None
+        try:
+            pid, fd = pty.fork()
+        finally:
+            if pid != 0:
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         if pid == 0:
             # The command starts with the usual handling of every signal, and none
             # blocked, whatever the server inherited or set, or Python chose, such
@@ -1001,20 +1009,21 @@ def main():
     )
 
     try:
-        server = make_server(
+        # Closing the server before the terminals refuses requests made meanwhile.
+        with make_server(
             "localhost",
             int(o.port),
             at,
             handler_class=handler_class,
             server_class=ThreadingWSGIServer,
-        )
+        ) as server:
 
-        def stop():
-            signal.sigwait(stop_signals)
-            server.shutdown()
+            def stop():
+                signal.sigwait(stop_signals)
+                server.shutdown()
 
-        threading.Thread(target=stop, daemon=True).start()
-        server.serve_forever()
+            threading.Thread(target=stop, daemon=True).start()
+            server.serve_forever()
     finally:
         at.multi.die()
         at.multi.thread.join()
