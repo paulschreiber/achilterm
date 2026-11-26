@@ -230,7 +230,8 @@ Changelog
    browsers, and remove support for Internet Explorer
 
 -  Keep Alt with the arrows or Home from leaving the page, by sending the key to
-   the terminal; Alt with Backspace deletes a word in shells
+   the terminal; Alt with Backspace deletes a word in shells such as bash and
+   zsh
 
 -  Fix large input, such as a long paste, being cut off
 

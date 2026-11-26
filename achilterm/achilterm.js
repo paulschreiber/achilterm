@@ -187,7 +187,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			if(letter(ev))
 				k=`\x1b${letter(ev)}`;
 			else if(ev.key=='Backspace')
-				k='\x1b\x7f'; // deletes a word in shells
+				k='\x1b\x7f'; // deletes a word in shells such as bash and zsh
 			else if(editing_keys.includes(ev.key))
 				k=special_keys[ev.key];
 		} else if(special_keys.hasOwnProperty(ev.key)) {
