@@ -214,6 +214,14 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		else if(ev.charCode)
 			send_key(ev,String.fromCodePoint(ev.charCode));
 	}
+	// Reloading or coming back starts a new terminal, so have the browser ask
+	// before leaving one that may still be running.
+	function confirm_leaving(ev) {
+		if(params.get('s') && !refused) {
+			ev.preventDefault();
+			ev.returnValue=true; // for older browsers
+		}
+	}
 	function init() {
 		sled.appendChild(document.createTextNode('\xb7'));
 		sled.className='off';
@@ -230,6 +238,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		opt_paste.addEventListener('click',do_paste,true);
 		document.onkeypress=keypress;
 		document.onkeydown=keydown;
+		window.addEventListener('beforeunload',confirm_leaving);
 		timeout=window.setTimeout(update,100);
 	}
 	init();

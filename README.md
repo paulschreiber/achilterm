@@ -233,6 +233,9 @@ Changelog
    the terminal; Alt with Backspace deletes a word in shells such as bash and
    zsh
 
+-  Ask before leaving or reloading a page whose terminal may still be running,
+   since that loses the terminal
+
 -  Send typing and show its output promptly, rather than sometimes after up to
    two seconds
 
