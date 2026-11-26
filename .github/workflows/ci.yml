@@ -9,6 +9,26 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    # Pull requests from this repository are already linted by the push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Install development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group dev
+      - name: Check lint rules
+        run: ruff check --output-format=github .
+      - name: Check formatting
+        # Run even if linting fails, to report both kinds of problem at once.
+        if: ${{ !cancelled() }}
+        run: ruff format --check --diff .
+
   test:
     # Pull requests from this repository are already tested by the push.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository

@@ -31,6 +31,9 @@ classifiers = [
 ]
 dependencies = ["webob>=1.8.9"]
 
+[dependency-groups]
+dev = ["ruff==0.17.6"]
+
 [project.urls]
 Homepage = "https://paulschreiber.github.io/achilterm/"
 Source = "https://github.com/paulschreiber/achilterm"

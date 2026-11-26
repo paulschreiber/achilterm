@@ -44,6 +44,13 @@ To install the development version from GitHub:
     $ python3 -m venv .venv
     $ .venv/bin/pip install .
 
+To lint the code and check its formatting (needs pip 25.1 or later):
+
+    $ .venv/bin/pip install --upgrade pip
+    $ .venv/bin/pip install --group dev
+    $ .venv/bin/ruff check .
+    $ .venv/bin/ruff format --check .
+
 To run Achilterm after installation:
 
     $ achilterm
