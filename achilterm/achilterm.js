@@ -1,6 +1,9 @@
 achilterm={};
 achilterm.Terminal_ctor=function(id,width,height) {
-	var sid=""+Math.round(Math.random()*1000000000);
+	// 128 random bits, which can't be guessed.
+	var sid=Array.from(crypto.getRandomValues(new Uint8Array(16)), function(byte) {
+		return byte.toString(16).padStart(2,'0');
+	}).join('');
 	var query0="s="+sid+"&w="+width+"&h="+height;
 	var query1=query0+"&c=1&k=";
 	var timeout;
@@ -67,6 +70,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			var query=query1+send;
 			r.open("POST","u",true);
 			r.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+			// Shows the server that this request comes from its own page.
+			r.setRequestHeader('X-Achilterm','1');
 			r.onreadystatechange = function () {
 //				debug("xhr:"+((new Date).getTime())+" state:"+r.readyState+" status:"+r.status+" statusText:"+r.statusText);
 				if (r.readyState==4) {
