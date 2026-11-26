@@ -147,7 +147,7 @@ Commandline usage
       -w WIDTH, --width=WIDTH    set the width (default: 80)
       -H HEIGHT, --height=HEIGHT set the height (default: 25)
       --timeout=TIMEOUT          close a terminal not shown by a browser for this
-                                 many seconds (default: 300, at least 5)
+                                 many seconds (default: 300, at least 90)
       --allow-host=NAME          also accept requests for this host name; repeat
                                  for more (default: only localhost)
 
@@ -230,6 +230,10 @@ Changelog
    for unknown host names (see ``--allow-host``)
 
 -  Close terminals whose page is no longer open (see ``--timeout``)
+
+-  Don't let other websites show the terminal in a frame
+
+-  Retry after a lost connection, and show why a page was refused
 
 -  Fix a security flaw that could connect a tab whose shell had ended to
    another user's terminal

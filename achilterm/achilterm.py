@@ -36,6 +36,7 @@ import os
 import pty
 import pwd
 import re
+import secrets
 import select
 import signal
 import struct
@@ -87,13 +88,31 @@ UNPRINTABLE = frozenset(
 
 
 # Close a terminal when its browser hasn't asked for updates for this many
-# seconds. Browsers may slow a hidden tab's requests to one a minute.
+# seconds. Browsers may slow a hidden tab's requests to one a minute, so shorter
+# timeouts than the minimum would close terminals that are still open.
 DEFAULT_TIMEOUT = 300
+MINIMUM_TIMEOUT = 90
 # Names a request may use for this server. Refusing others stops a website from
 # reaching it by pointing its own name at this machine.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # Session IDs are 128 random bits, chosen by the page, as hexadecimal.
 SESSION_ID = re.compile("[0-9a-f]{32}")
+
+
+def host_name(host):
+    """The name in a Host header, without any port, or None if it isn't one."""
+    if host.count(":") > 1 and not host.startswith("["):
+        host = f"[{host}]"  # an IPv6 address given without brackets
+    try:
+        return urlsplit("//" + host).hostname
+    except ValueError:
+        return None
+
+
+def refuse(status, message, **headers):
+    return webob.Response(
+        text=message, status=status, content_type="text/plain", headers=headers
+    )
 
 
 class Terminal:
@@ -496,6 +515,8 @@ class Multiplex:
         # that is never reused.
         self.proc = {}
         self.key_counter = itertools.count(1)
+        # keys of the sessions closed because no browser was showing them
+        self.expired = set()
         self.lock = threading.RLock()
         self.thread = threading.Thread(target=self.loop)
         self.alive = 1
@@ -589,6 +610,7 @@ class Multiplex:
         for key, proc in list(self.proc.items()):
             if proc["seen"] < cutoff:
                 self.proc_close(key)
+                self.expired.add(key)
 
     def proc_read(self, key):
         try:
@@ -656,7 +678,7 @@ class AchilTerm:
     def __init__(
         self,
         cmd=None,
-        index_file="achilterm.html",
+        index_file=None,
         lite=False,
         width=80,
         height=25,
@@ -666,6 +688,8 @@ class AchilTerm:
         os.chdir(os.path.normpath(os.path.dirname(__file__)))
         if lite:
             index_file = "achiltermlite.html"
+        elif index_file is None:
+            index_file = "achilterm.html"
         self.files = {}
         for i in ["css", "html", "js"]:
             for j in glob.glob(f"*.{i}"):
@@ -677,42 +701,44 @@ class AchilTerm:
         self.mime[".html"] = "text/html; charset=UTF-8"
         # Older Pythons map .js to a type that WebOb won't write text to.
         self.mime[".js"] = "text/javascript; charset=UTF-8"
-        self.hosts = LOCAL_HOSTS | {host.lower() for host in allow_hosts}
+        self.hosts = LOCAL_HOSTS | {host_name(host) for host in allow_hosts}
         self.multi = Multiplex(cmd, timeout)
         self.session = {}
+        # Tells a page whether this is still the server it was talking to.
+        self.instance = secrets.token_hex(8)
 
-    def refusal(self, req):
-        """Why a request mustn't reach a terminal, as a status and a message."""
-        try:
-            host = urlsplit("//" + req.environ.get("HTTP_HOST", "")).hostname
-        except ValueError:
-            host = None
-        if host not in self.hosts:
-            return 403, "Unknown host name. Start achilterm with --allow-host."
-        if not req.environ["PATH_INFO"].endswith("/u"):
+    def refusal(self, req, to_terminal):
+        """The response to a request that mustn't be served, or None."""
+        if host_name(req.environ.get("HTTP_HOST", "")) not in self.hosts:
+            return refuse(403, "Unknown host name. Start achilterm with --allow-host.")
+        if not to_terminal:
             return None
         # Keystrokes are only accepted in a request body, because servers and
         # proxies commonly log addresses.
         if req.method != "POST":
-            return 405, "Use POST."
+            return refuse(405, "Use POST.", Allow="POST")
         # Another website's page can't send this header without permission, which
         # is never given.
         if "X-Achilterm" not in req.headers:
-            return 403, "Missing X-Achilterm header. Reload the page."
+            return refuse(403, "Missing X-Achilterm header. Reload the page.")
         if not SESSION_ID.fullmatch(req.POST.get("s", "")):
-            return 400, "Invalid session ID. Reload the page."
+            return refuse(400, "Invalid session ID. Reload the page.")
+        # A page that reconnects after a restart mustn't get a new terminal
+        # unnoticed, with whatever was typed meanwhile.
+        if req.POST.get("i", "") not in ("", self.instance):
+            return refuse(
+                410, "The server restarted. Reload the page to start a new terminal."
+            )
         return None
 
     def __call__(self, environ, start_response):
         req = webob.Request(environ)
         res = webob.Response()
-        refused = self.refusal(req)
+        to_terminal = req.environ["PATH_INFO"].endswith("/u")
+        refused = self.refusal(req, to_terminal)
         if refused:
-            res.status, res.text = refused
-            res.content_type = "text/plain"
-            if res.status_code == 405:
-                res.headers["Allow"] = "POST"
-        elif req.environ["PATH_INFO"].endswith("/u"):
+            return refused(environ, start_response)
+        if to_terminal:
             s = req.POST["s"]
             k = req.POST.get("k", "")
             c = req.POST.get("c", "")
@@ -724,11 +750,20 @@ class AchilTerm:
                 if not (w > 2 and w < 256 and h > 2 and h < 100):
                     w, h = 80, 25
                 term = self.session[s] = self.multi.create(w, h)
+            if term in self.multi.expired:
+                # Don't quietly start another terminal: the person may go on
+                # typing as if it were the one that was closed.
+                return refuse(
+                    410,
+                    "This terminal was closed because the page was disconnected. "
+                    "Reload the page to start a new one.",
+                )(environ, start_response)
             if k:
                 self.multi.proc_write(term, k)
             time.sleep(0.002)
             dump = self.multi.dump(term, c)
             res.content_type = "text/xml"
+            res.headers["X-Achilterm-Instance"] = self.instance
             if isinstance(dump, str):
                 res.content_encoding = "gzip"
                 zbuf = BytesIO()
@@ -742,6 +777,10 @@ class AchilTerm:
                 res.write('<?xml version="1.0"?><idem></idem>')
         # 			print "sessions %r"%self.session
         else:
+            # Another website mustn't show the terminal inside its own page, where
+            # it could trick someone into typing into it.
+            res.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+            res.headers["X-Frame-Options"] = "SAMEORIGIN"
             n = os.path.basename(req.environ["PATH_INFO"])
             if n in self.files:
                 res.content_type = self.mime.get(
@@ -830,7 +869,7 @@ def main():
         dest="timeout",
         default=DEFAULT_TIMEOUT,
         help="close a terminal not shown by a browser for this many seconds "
-        "(default: %default)",
+        f"(default: %default, at least {MINIMUM_TIMEOUT})",
     )
     parser.add_option(
         "--allow-host",
@@ -842,10 +881,11 @@ def main():
         "(default: only localhost)",
     )
     (o, _a) = parser.parse_args()
-    # A page asks for the screen at least every couple of seconds.
-    if o.timeout < 5:
-        parser.error("--timeout must be at least 5 seconds")
-    options = {"timeout": o.timeout, "allow_hosts": o.allow_hosts}
+    if o.timeout < MINIMUM_TIMEOUT:
+        parser.error(f"--timeout must be at least {MINIMUM_TIMEOUT} seconds")
+    for host in o.allow_hosts:
+        if not host_name(host):
+            parser.error(f"--allow-host: {host!r} isn't a host name")
     if o.daemon:
         pid = os.fork()
         if pid == 0:
@@ -871,9 +911,10 @@ def main():
         handler_class = WSGIRequestHandler
     else:
         handler_class = NoLogWSGIRequestHandler
-    if o.index_file:
-        options["index_file"] = os.path.abspath(o.index_file)
-    at = AchilTerm(o.cmd, lite=o.lite, width=o.width, height=o.height, **options)
+    index_file = os.path.abspath(o.index_file) if o.index_file else None
+    at = AchilTerm(
+        o.cmd, index_file, o.lite, o.width, o.height, o.timeout, o.allow_hosts
+    )
     try:
         make_server(
             "localhost",

@@ -10,6 +10,9 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	var error_timeout;
 	var keybuf=[];
 	var sending=0;
+	// which run of the server this page is talking to
+	var server='';
+	var retrying=false;
 	var rmax=1;
 
 	var div=document.getElementById(id);
@@ -67,7 +70,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			while(keybuf.length>0) {
 				send+=keybuf.pop();
 			}
-			var query=query1+send;
+			var query='i='+server+'&'+query1+send;
 			r.open("POST","u",true);
 			r.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
 			// Shows the server that this request comes from its own page.
@@ -75,8 +78,13 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			r.onreadystatechange = function () {
 //				debug("xhr:"+((new Date).getTime())+" state:"+r.readyState+" status:"+r.status+" statusText:"+r.statusText);
 				if (r.readyState==4) {
+					window.clearTimeout(error_timeout);
 					if(r.status==200) {
-						window.clearTimeout(error_timeout);
+						if(retrying) {
+							retrying=false;
+							debug('');
+						}
+						server=r.getResponseHeader('X-Achilterm-Instance') || '';
 						var de=r.responseXML.documentElement;
 						if(de.tagName=="pre") {
                     					dterm.innerHTML = r.responseText;
@@ -89,8 +97,17 @@ achilterm.Terminal_ctor=function(id,width,height) {
 						sending=0;
 						sled.className='off';
 						timeout=window.setTimeout(update,rmax);
+					} else if(r.status==0 || r.status>=500) {
+						// The server or the connection may only be away briefly.
+						retrying=true;
+						sending=0;
+						sled.className='off';
+						debug("Connection lost, retrying. Status:"+r.status);
+						timeout=window.setTimeout(update,2000);
 					} else {
-						debug("Connection error status:"+r.status);
+						// The server refused this page, and would again.
+						sled.className='off';
+						sdebug.textContent=r.responseText || "Connection error status:"+r.status;
 					}
 				}
 			}
