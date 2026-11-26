@@ -145,12 +145,11 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		'F6':'\x1b[17~', 'F7':'\x1b[18~', 'F8':'\x1b[19~', 'F9':'\x1b[20~', 'F10':'\x1b[21~',
 		'F11':'\x1b[23~', 'F12':'\x1b[24~'
 	};
-	// With Alt, these move or delete by word, as Alt-B, Alt-F and so on do. Shells
-	// such as bash and zsh understand these without any setting up.
-	var alt_keys={'ArrowLeft':'\x1bb', 'ArrowRight':'\x1bf', 'Backspace':'\x1b\x7f'};
-	// With Alt, the other keys that move or edit do what they do without it, so
-	// that the browser doesn't act on them, such as by going to its home page.
-	var editing_keys=['ArrowUp','ArrowDown','Home','End','PageUp','PageDown','Insert','Delete'];
+	// With Alt, the keys that move or edit do what they do without it, so that
+	// the browser doesn't act on them, such as by going back a page. Sending
+	// anything else for the arrows can upset programs such as zsh or vim.
+	var editing_keys=['ArrowUp','ArrowDown','ArrowRight','ArrowLeft',
+		'Home','End','PageUp','PageDown','Insert','Delete'];
 	// Ctrl with these characters, in addition to Ctrl with a letter.
 	var control_keys={'@':0, '[':27, '\\':28, ']':29, '6':30, '^':30, '-':31, '_':31};
 	function is_altgr(ev) {
@@ -187,8 +186,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		} else if(ev.altKey) {
 			if(letter(ev))
 				k=`\x1b${letter(ev)}`;
-			else if(alt_keys.hasOwnProperty(ev.key))
-				k=alt_keys[ev.key];
+			else if(ev.key=='Backspace')
+				k='\x1b\x7f'; // deletes a word in shells
 			else if(editing_keys.includes(ev.key))
 				k=special_keys[ev.key];
 		} else if(special_keys.hasOwnProperty(ev.key)) {

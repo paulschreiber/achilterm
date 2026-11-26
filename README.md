@@ -229,8 +229,8 @@ Changelog
 -  Fix special keys, such as Backspace, the arrows and Ctrl-C, in current
    browsers, and remove support for Internet Explorer
 
--  Keep Alt with the arrows or Home from leaving the page; Alt with Left, Right
-   or Backspace moves or deletes by word in bash and zsh
+-  Keep Alt with the arrows or Home from leaving the page, by sending the key to
+   the terminal; Alt with Backspace deletes a word in shells
 
 -  Fix large input, such as a long paste, being cut off
 
