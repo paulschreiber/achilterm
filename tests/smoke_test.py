@@ -560,26 +560,27 @@ def check_last_output():
         assert post(app, session).status_code == 410
         assert session not in app.multi.last_screens
 
-        # The screen waits as long as the page would have been waited for, which
-        # is less for one that has asked only once, and again each time it's sent.
+        # The screen waits as long as a live session would, so less for a page that
+        # has asked only once, and again each time it's sent.
         def time_left(session):
-            return app.multi.last_screens[session]["deadline"] - time.monotonic()
+            proc = app.multi.last_screens[session]
+            return proc["seen"] + app.multi.idle_limit(proc) - time.monotonic()
+
+        def about(limit, session):
+            return limit - 10 < time_left(session) <= limit
 
         session = end_command(app)
-        assert MINIMUM_TIMEOUT - 10 < time_left(session) <= MINIMUM_TIMEOUT
-        session = new_app_session(app)
+        assert about(MINIMUM_TIMEOUT, session), time_left(session)
+        # Asking a second time shows that the page got its ID.
         post(app, session)
-        app.multi.proc_write(session, "\r")
-        assert wait_until(lambda: session in app.multi.last_screens), "not kept"
-        assert DEFAULT_TIMEOUT - 10 < time_left(session) <= DEFAULT_TIMEOUT
-        app.multi.last_screens[session]["deadline"] = time.monotonic() + 1
-        assert post(app, session).status_code == 200
-        assert DEFAULT_TIMEOUT - 10 < time_left(session) <= DEFAULT_TIMEOUT
+        assert about(DEFAULT_TIMEOUT, session), time_left(session)
+        app.multi.last_screens[session]["seen"] -= DEFAULT_TIMEOUT - 1
+        assert post(app, session, f=1).status_code == 200
+        assert about(DEFAULT_TIMEOUT, session), time_left(session)
 
         # A screen that no page asks for isn't kept for ever.
-        session = end_command(app)
         with app.multi.lock:
-            app.multi.last_screens[session]["deadline"] = time.monotonic() - 1
+            app.multi.last_screens[session]["seen"] -= DEFAULT_TIMEOUT + 1
             app.multi.expire()
             assert session not in app.multi.last_screens
         assert post(app, session).status_code == 410
