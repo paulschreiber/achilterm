@@ -141,11 +141,13 @@ def clamp(value, low, high):
 def dimension(value, name, sizes):
     """A width or height as a number, if a terminal can have it."""
     try:
-        number = int(value)  # which allows leading zeros
-    except (TypeError, ValueError):
+        # In decimal, with any leading zeros, and without cutting off fractions.
+        number = int(str(value))
+    except ValueError:
         number = None
     if number not in sizes:
-        raise ValueError(f"{name} must be a number from {sizes[0]} to {sizes[-1]}")
+        smallest, largest = sizes[0], sizes[-1]
+        raise ValueError(f"{name} must be a whole number from {smallest} to {largest}")
     return number
 
 
