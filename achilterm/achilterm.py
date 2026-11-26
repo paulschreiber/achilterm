@@ -93,6 +93,10 @@ UNPRINTABLE = frozenset(
 # timeouts than the minimum would close terminals that are still open.
 DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
+# The command line's other limits. A far longer timeout would overflow the clock
+# arithmetic.
+TIMEOUTS = range(MINIMUM_TIMEOUT, 10**9)
+PORTS = range(65536)
 # Kill what's left of a closed terminal's command after this many seconds.
 KILL_DELAY = 5
 # The sizes a terminal can have, and the usual one.
@@ -139,15 +143,16 @@ def clamp(value, low, high):
     return max(low, min(value, high))
 
 
-def dimension(value, name, sizes):
-    """A width or height as a number, if a terminal can have it."""
+def whole_number(value, name, allowed):
+    """A setting such as a width as a number, if it is one of those allowed."""
     try:
         # In decimal, with any leading zeros, and without cutting off fractions.
         number = int(str(value))
     except ValueError:
         number = None
-    if number not in sizes:
-        smallest, largest = sizes[0], sizes[-1]
+    # Looking for None in a long range would compare it with every number.
+    if number is None or number not in allowed:
+        smallest, largest = allowed[0], allowed[-1]
         raise ValueError(f"{name} must be a whole number from {smallest} to {largest}")
     return number
 
@@ -157,8 +162,8 @@ def requested_size(fields):
     missing or no terminal can have it."""
     try:
         return (
-            dimension(fields.get("w"), "w", WIDTHS),
-            dimension(fields.get("h"), "h", HEIGHTS),
+            whole_number(fields.get("w"), "w", WIDTHS),
+            whole_number(fields.get("h"), "h", HEIGHTS),
         )
     except ValueError:
         return DEFAULT_WIDTH, DEFAULT_HEIGHT
@@ -874,8 +879,8 @@ class AchilTerm:
         allow_hosts=(),
     ):
         # These go into the page's script, so must be sizes it can be given.
-        width = dimension(width, "width", WIDTHS)
-        height = dimension(height, "height", HEIGHTS)
+        width = whole_number(width, "width", WIDTHS)
+        height = whole_number(height, "height", HEIGHTS)
         os.chdir(os.path.normpath(os.path.dirname(__file__)))
         self.files = {}
         for i in ["css", "html", "js"]:
@@ -1024,7 +1029,6 @@ def main():
     )
     parser.add_option(
         "--timeout",
-        type="int",
         dest="timeout",
         default=DEFAULT_TIMEOUT,
         help="close a terminal not shown by a browser for this many seconds "
@@ -1041,12 +1045,12 @@ def main():
     )
     (o, _a) = parser.parse_args()
     try:
-        width = dimension(o.width, "--width", WIDTHS)
-        height = dimension(o.height, "--height", HEIGHTS)
+        width = whole_number(o.width, "--width", WIDTHS)
+        height = whole_number(o.height, "--height", HEIGHTS)
+        timeout = whole_number(o.timeout, "--timeout", TIMEOUTS)
+        port = whole_number(o.port, "--port", PORTS)
     except ValueError as error:
         parser.error(str(error))
-    if o.timeout < MINIMUM_TIMEOUT:
-        parser.error(f"--timeout must be at least {MINIMUM_TIMEOUT} seconds")
     for host in o.allow_hosts:
         try:
             allowed_host(host)
@@ -1070,7 +1074,7 @@ def main():
         index_file=index_file,
         width=width,
         height=height,
-        timeout=o.timeout,
+        timeout=timeout,
         allow_hosts=o.allow_hosts,
     )
 
@@ -1078,7 +1082,7 @@ def main():
         # Closing the server before the terminals refuses requests made meanwhile.
         with make_server(
             "localhost",
-            int(o.port),
+            port,
             at,
             handler_class=handler_class,
             server_class=ThreadingWSGIServer,
