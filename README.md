@@ -119,13 +119,6 @@ Documentation and Caveats
 
    Using ssl will also speed up achilterm (probably because of keepalive).
 
-Achiltermlite
--------------
-
-Achiltermlite is a stripped-down client-side version of Achilterm.
-
-![Achiltermlite](https://raw.githubusercontent.com/paulschreiber/achilterm/main/img/achiltermlite.png)
-
 Commandline usage
 -----------------
 
@@ -143,7 +136,6 @@ Commandline usage
       -i INDEX_FILE, --index=INDEX_FILE
                                  default index file (default: achilterm.html)
       -u UID, --uid=UID          set the daemon's user id
-      -L, --lite                 use Achiltermlite
       -w WIDTH, --width=WIDTH    set the width (default: 80)
       -H HEIGHT, --height=HEIGHT set the height (default: 25)
       --timeout=TIMEOUT          close a terminal not shown by a browser for this
@@ -205,6 +197,9 @@ Changelog
 ### 0.30 (November 2026)
 
 -  Publish as ``achilterm-ng``
+
+-  Remove Achiltermlite, the stripped-down page, and its ``-L``/``--lite``
+   option
 
 -  Serve requests on threads, so an idle connection no longer blocks others
 

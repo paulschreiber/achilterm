@@ -722,20 +722,18 @@ class AchilTerm:
         self,
         cmd=None,
         index_file=None,
-        lite=False,
         width=80,
         height=25,
         timeout=DEFAULT_TIMEOUT,
         allow_hosts=(),
     ):
         os.chdir(os.path.normpath(os.path.dirname(__file__)))
-        index_file = "achiltermlite.html" if lite else index_file or "achilterm.html"
         self.files = {}
         for i in ["css", "html", "js"]:
             for j in glob.glob(f"*.{i}"):
                 with open(j) as f:
                     self.files[j] = f.read()
-        with open(index_file) as f:
+        with open(index_file or "achilterm.html") as f:
             self.files["index"] = f.read() % {"width": width, "height": height}
         self.mime = mimetypes.types_map.copy()
         self.mime[".html"] = "text/html; charset=UTF-8"
@@ -869,14 +867,6 @@ def main():
     )
     parser.add_option("-u", "--uid", dest="uid", help="set the daemon's user id")
     parser.add_option(
-        "-L",
-        "--lite",
-        action="store_true",
-        dest="lite",
-        default=0,
-        help="use Achiltermlite",
-    )
-    parser.add_option(
         "-w", "--width", dest="width", default="80", help="set the width (default: 80)"
     )
     parser.add_option(
@@ -940,7 +930,6 @@ def main():
     at = AchilTerm(
         o.cmd,
         index_file=index_file,
-        lite=o.lite,
         width=o.width,
         height=o.height,
         timeout=o.timeout,
