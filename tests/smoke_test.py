@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from importlib.metadata import version
+from unittest import mock
 from xml.etree import ElementTree
 
 import webob
@@ -332,6 +333,70 @@ def check_output_fault():
         assert app.multi.thread.is_alive()
 
 
+def app_screen(app, session, keys=""):
+    """Send keys to an application running here, and return its response."""
+    response = post(app, session, keys)
+    response.decode_content()
+    return response.text
+
+
+def wait_until(condition, seconds=5):
+    end = time.monotonic() + seconds
+    while not condition():
+        if time.monotonic() > end:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def check_processes():
+    """Closed terminals leave no processes behind, even ones that won't end."""
+    command = """read mode
+        [ $mode = exit ] && exit
+        [ $mode = stubborn ] && trap '' HUP TERM
+        sleep 60 & echo "child $!"; wait"""
+
+    def start(app, mode):
+        """A session, its process and that process's own child."""
+        session = new_app_session(app)
+        pid = app.multi.proc[session]["pid"]
+        send = functools.partial(app_screen, app, session)
+        screen = wait_for_screen(send, mode + "\r", "child [0-9]+")
+        child = int(re.search("child ([0-9]+)", screen_text(screen))[1])
+        return session, pid, child
+
+    def close(app, session):
+        with app.multi.lock:
+            app.multi.proc_close(session)
+
+    def gone(pid, child):
+        # The command is collected, not left as a zombie. Its child is collected
+        # by whichever process adopts it.
+        return not os.path.exists(f"/proc/{pid}") and not is_running(child)
+
+    with mock.patch("achilterm.achilterm.KILL_DELAY", 1):
+        with running_app(command) as app:
+            session = new_app_session(app)
+            pid = app.multi.proc[session]["pid"]
+            post(app, session, "exit\r")
+            assert wait_until(lambda: not os.path.exists(f"/proc/{pid}")), "exited"
+
+            session, pid, child = start(app, "ordinary")
+            close(app, session)
+            assert wait_until(lambda: gone(pid, child)), "closed"
+
+            session, pid, child = start(app, "stubborn")
+            close(app, session)
+            time.sleep(0.3)
+            assert is_running(pid) and is_running(child), "killed too soon"
+            assert wait_until(lambda: gone(pid, child)), "ignored its signals"
+            assert not app.multi.ending, app.multi.ending
+
+            session, pid, child = start(app, "stubborn")
+        # Stopping the server ends them too.
+        assert wait_until(lambda: gone(pid, child), 1), "outlived the server"
+
+
 def check_many_descriptors():
     """Terminals must work when their descriptors are numbered 1024 or higher."""
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -345,13 +410,7 @@ def check_many_descriptors():
         while filler[-1] < 1024:
             filler.append(os.open(os.devnull, os.O_RDONLY))
         with running_app('read line; echo "got $line"; sleep 30') as app:
-            session = new_app_session(app)
-
-            def send(keys):
-                response = post(app, session, keys)
-                response.decode_content()
-                return response.text
-
+            send = functools.partial(app_screen, app, new_app_session(app))
             wait_for_screen(send, "input\r", "got input")
             assert min(proc["fd"] for proc in app.multi.proc.values()) >= 1024
     finally:
@@ -473,6 +532,7 @@ def main():
     check_expiry()
     check_unused()
     check_output_fault()
+    check_processes()
     check_many_descriptors()
     print("smoke test passed")
 

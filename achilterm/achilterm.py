@@ -93,6 +93,8 @@ UNPRINTABLE = frozenset(
 # timeouts than the minimum would close terminals that are still open.
 DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
+# Kill a closed terminal's command if it hasn't ended after this many seconds.
+KILL_DELAY = 5
 # Names a request may use for this server. Refusing others stops a website from
 # reaching it by pointing its own name at this machine.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -527,7 +529,6 @@ class SynchronizedMethod:
 
 class Multiplex:
     def __init__(self, cmd=None, timeout=DEFAULT_TIMEOUT):
-        # signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         self.cmd = cmd
         self.timeout = timeout
         # Sessions are keyed by an ID that the server chooses, too random to be
@@ -535,6 +536,8 @@ class Multiplex:
         self.proc = {}
         # why a session was closed, by key, when there is a reason to give
         self.close_reasons = {}
+        # when to kill each closed session's process, by process ID, until it ends
+        self.ending = {}
         self.lock = threading.RLock()
         self.thread = threading.Thread(target=self.loop)
         self.alive = 1
@@ -546,6 +549,7 @@ class Multiplex:
             "proc_write",
             "proc_flush",
             "expire",
+            "reap",
             "dump",
             "die",
             "run",
@@ -620,11 +624,27 @@ class Multiplex:
         if proc:
             if reason:
                 self.close_reasons[key] = reason
-            try:
+            with contextlib.suppress(OSError):
                 os.close(proc["fd"])
+            with contextlib.suppress(OSError):
                 os.kill(proc["pid"], signal.SIGTERM)
-            except OSError:
-                pass
+            self.ending[proc["pid"]] = time.monotonic() + KILL_DELAY
+
+    def reap(self):
+        """Collect the processes of closed sessions, killing any that linger."""
+        now = time.monotonic()
+        for pid, deadline in list(self.ending.items()):
+            try:
+                ended = os.waitpid(pid, os.WNOHANG)[0]
+            except ChildProcessError:
+                ended = True  # something else has collected it
+            if ended:
+                del self.ending[pid]
+            elif now > deadline:
+                # The command leads its own process group. Until it's collected,
+                # that group's number can't belong to anything else.
+                with contextlib.suppress(OSError):
+                    os.killpg(pid, signal.SIGKILL)
 
     def expire(self):
         """Close the sessions that no browser is showing any more."""
@@ -692,6 +712,7 @@ class Multiplex:
     def loop(self):
         while self.run():
             self.expire()
+            self.reap()
             # Unlike select(), poll() works with any number of descriptors.
             try:
                 with selectors.PollSelector() as selector:
@@ -715,6 +736,12 @@ class Multiplex:
         with self.lock:
             for key in list(self.proc):
                 self.proc_close(key)
+        # Wait for the processes to end, but not forever for one that can't be
+        # killed, such as a command running as another user.
+        give_up = time.monotonic() + KILL_DELAY + 1
+        while self.ending and time.monotonic() < give_up:
+            time.sleep(0.05)
+            self.reap()
 
 
 class AchilTerm:
