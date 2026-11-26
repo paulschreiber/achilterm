@@ -7,13 +7,16 @@ import re
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from importlib.metadata import version
 from xml.etree import ElementTree
+
+import webob
+
+from achilterm.achilterm import AchilTerm
 
 COMMAND = os.path.join(os.path.dirname(sys.executable), "achilterm")
 
@@ -81,10 +84,8 @@ def start_server(*options):
     raise AssertionError("server did not start")
 
 
-def check_access_and_expiry():
-    server, port, base = start_server(
-        "--timeout=5", "--allow-host=Terminal.Example.com"
-    )
+def check_access():
+    server, port, base = start_server("--allow-host=Terminal.Example.com:443")
     url = f"{base}u"
     try:
         # Only requests from the terminal page, with a random session ID.
@@ -106,27 +107,68 @@ def check_access_and_expiry():
             assert status(base, headers=headers) == expected, host
             assert status(url, terminal_query("h"), headers) == expected, host
 
-        # A terminal closes once no page asks for it, even while it has output,
-        # and stays open while one does.
-        with tempfile.TemporaryDirectory() as directory:
-            for name in ("shown", "left"):
-                fetch(url, terminal_query(name))
-                command = f"echo $$ > {directory}/{name}; "
-                command += "while :; do echo busy; sleep 1; done\r"
-                fetch(url, terminal_query(name, command))
-            for attempt in range(16):
-                time.sleep(0.5)
-                fetch(url, terminal_query("shown"))
-            pids = {}
-            for name in ("shown", "left"):
-                with open(f"{directory}/{name}") as file:
-                    pids[name] = int(file.read())
-            assert is_running(pids["shown"]), "a shown terminal was closed"
-            assert not is_running(pids["left"]), "an abandoned terminal stayed open"
+        # A page left over from before a restart gets no terminal.
+        stale = terminal_query("restart") + b"&i=0123456789abcdef"
+        assert status(url, stale) == 410
+        with urllib.request.urlopen(
+            urllib.request.Request(url, terminal_query("restart"), PAGE_HEADERS),
+            timeout=10,
+        ) as response:
+            instance = response.headers["X-Achilterm-Instance"]
+        assert status(url, terminal_query("restart") + f"&i={instance}".encode()) == 200
+
+        # Other websites may not frame the page.
+        with urllib.request.urlopen(base, timeout=10) as response:
+            assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
     finally:
         server.terminate()
         errors = server.communicate(timeout=10)[1].decode()
     assert "Traceback" not in errors, errors
+
+    for option in ("--timeout=89", "--allow-host=[nonsense"):
+        result = subprocess.run(
+            [COMMAND, option], capture_output=True, timeout=10, check=False
+        )
+        assert result.returncode == 2, (option, result)
+
+
+def check_expiry():
+    # Runs the application here, to use a timeout shorter than the command allows.
+    app = AchilTerm("while :; do echo busy; sleep 1; done", timeout=2)
+
+    def post(name):
+        request = webob.Request.blank(
+            "/u", headers={**PAGE_HEADERS, "Host": "localhost"}
+        )
+        request.method = "POST"
+        request.content_type = "application/x-www-form-urlencoded"
+        request.body = terminal_query(name)
+        return request.get_response(app)
+
+    try:
+        pids = {}
+        for name in ("shown", "left"):
+            assert post(name).status_code == 200
+            key = app.session[session_id(name)]
+            pids[name] = app.multi.proc[key]["pid"]
+        # A terminal closes once no page asks for it, even while it has output,
+        # and stays open while one does.
+        for attempt in range(50):
+            time.sleep(0.2)
+            assert post("shown").status_code == 200
+            if attempt > 12 and not is_running(pids["left"]):
+                break
+        assert is_running(pids["shown"]), "a shown terminal was closed"
+        assert not is_running(pids["left"]), "an abandoned terminal stayed open"
+        # Its page is told, every time, and gets no new terminal.
+        for attempt in range(2):
+            response = post("left")
+            assert response.status_code == 410, response.status
+            assert "Reload" in response.text
+        assert len(app.multi.proc) == 1, app.multi.proc
+    finally:
+        app.multi.die()
+        app.multi.thread.join(10)
 
 
 def screen_text(response):
@@ -166,12 +208,7 @@ def main():
             assert fetch(base + name), name
 
         # Keystrokes must not be accepted in an address, which may be logged.
-        try:
-            fetch(f"{base}u?s=get&w=80&h=25&c=1&k=x")
-        except urllib.error.HTTPError as error:
-            assert error.code == 405, error.code
-        else:
-            raise AssertionError("a GET request was accepted")
+        assert status(f"{base}u?s=get&w=80&h=25&c=1&k=x") == 405
 
         # A tab whose shell has ended must never reach a newer terminal. This
         # runs first, while the next terminal would reuse the ended one's file
@@ -243,7 +280,8 @@ def main():
         errors = server.communicate(timeout=10)[1].decode()
 
     assert "Traceback" not in errors, errors
-    check_access_and_expiry()
+    check_access()
+    check_expiry()
     print("smoke test passed")
 
 

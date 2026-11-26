@@ -9,6 +9,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	var timeout;
 	var keybuf=[];
 	var sending=0;
+	// which run of the server this page is talking to
+	var server='';
 	var rmax=1;
 
 	var div=document.getElementById(id);
@@ -22,7 +24,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			while(keybuf.length>0) {
 				send+=keybuf.pop();
 			}
-			var query=query1+send;
+			var query='i='+server+'&'+query1+send;
 			r.open("POST","u",true);
 			r.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
 			// Shows the server that this request comes from its own page.
@@ -30,6 +32,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			r.onreadystatechange = function () {
 				if (r.readyState==4) {
 					if(r.status==200) {
+						server=r.getResponseHeader('X-Achilterm-Instance') || '';
 						var de=r.responseXML.documentElement;
 						if(de.tagName=="pre") {
                     					dterm.innerHTML = r.responseText;
@@ -41,6 +44,13 @@ achilterm.Terminal_ctor=function(id,width,height) {
 						}
 						sending=0;
 						timeout=window.setTimeout(update,rmax);
+					} else if(r.status==0 || r.status>=500) {
+						// The server or the connection may only be away briefly.
+						sending=0;
+						timeout=window.setTimeout(update,2000);
+					} else {
+						// The server refused this page, and would again.
+						dterm.textContent=r.responseText || "Connection error status:"+r.status;
 					}
 				}
 			}
