@@ -101,18 +101,31 @@ SESSION_ID = re.compile("[0-9a-f]{32}")
 
 def host_name(host):
     """The name in a Host header, without any port, or None if it isn't one."""
-    if host.count(":") > 1 and not host.startswith("["):
-        host = f"[{host}]"  # an IPv6 address given without brackets
     try:
         return urlsplit("//" + host).hostname
     except ValueError:
         return None
 
 
+def allowed_host(value):
+    """A name given with --allow-host, in the form host_name() returns."""
+    host = value
+    if host.count(":") > 1 and not host.startswith("["):
+        host = f"[{host}]"  # an IPv6 address given without brackets
+    name = host_name(host)
+    if (
+        not name
+        or not re.fullmatch("[a-z0-9._:-]+", name)
+        or any(character in host for character in "/@?#")
+    ):
+        raise ValueError(f"{value!r} isn't a host name")
+    return name
+
+
 def refuse(status, message, **headers):
-    return webob.Response(
-        text=message, status=status, content_type="text/plain", headers=headers
-    )
+    response = webob.Response(text=message, status=status, content_type="text/plain")
+    response.headers.update(headers)
+    return response
 
 
 class Terminal:
@@ -644,10 +657,13 @@ class Multiplex:
         """Like fds(), for sessions with input still to be written."""
         return {proc["fd"]: key for key, proc in self.proc.items() if proc["input"]}
 
-    def dump(self, key, color=1):
+    def dump(self, key, color=1, full=False):
         try:
             self.proc[key]["seen"] = time.monotonic()
-            return self.proc[key]["term"].dumphtml(color)
+            term = self.proc[key]["term"]
+            if full:
+                term.last_html = ""  # send the screen even if it hasn't changed
+            return term.dumphtml(color)
         except KeyError:
             return False
 
@@ -686,10 +702,7 @@ class AchilTerm:
         allow_hosts=(),
     ):
         os.chdir(os.path.normpath(os.path.dirname(__file__)))
-        if lite:
-            index_file = "achiltermlite.html"
-        elif index_file is None:
-            index_file = "achilterm.html"
+        index_file = "achiltermlite.html" if lite else index_file or "achilterm.html"
         self.files = {}
         for i in ["css", "html", "js"]:
             for j in glob.glob(f"*.{i}"):
@@ -701,7 +714,7 @@ class AchilTerm:
         self.mime[".html"] = "text/html; charset=UTF-8"
         # Older Pythons map .js to a type that WebOb won't write text to.
         self.mime[".js"] = "text/javascript; charset=UTF-8"
-        self.hosts = LOCAL_HOSTS | {host_name(host) for host in allow_hosts}
+        self.hosts = LOCAL_HOSTS | {allowed_host(host) for host in allow_hosts}
         self.multi = Multiplex(cmd, timeout)
         self.session = {}
         # Tells a page whether this is still the server it was talking to.
@@ -733,11 +746,11 @@ class AchilTerm:
 
     def __call__(self, environ, start_response):
         req = webob.Request(environ)
-        res = webob.Response()
         to_terminal = req.environ["PATH_INFO"].endswith("/u")
         refused = self.refusal(req, to_terminal)
         if refused:
             return refused(environ, start_response)
+        res = webob.Response()
         if to_terminal:
             s = req.POST["s"]
             k = req.POST.get("k", "")
@@ -750,7 +763,12 @@ class AchilTerm:
                 if not (w > 2 and w < 256 and h > 2 and h < 100):
                     w, h = 80, 25
                 term = self.session[s] = self.multi.create(w, h)
-            if term in self.multi.expired:
+            if k:
+                self.multi.proc_write(term, k)
+            time.sleep(0.002)
+            # A page that lost a response asks for the whole screen again.
+            dump = self.multi.dump(term, c, bool(req.POST.get("f")))
+            if dump is False and term in self.multi.expired:
                 # Don't quietly start another terminal: the person may go on
                 # typing as if it were the one that was closed.
                 return refuse(
@@ -758,10 +776,6 @@ class AchilTerm:
                     "This terminal was closed because the page was disconnected. "
                     "Reload the page to start a new one.",
                 )(environ, start_response)
-            if k:
-                self.multi.proc_write(term, k)
-            time.sleep(0.002)
-            dump = self.multi.dump(term, c)
             res.content_type = "text/xml"
             res.headers["X-Achilterm-Instance"] = self.instance
             if isinstance(dump, str):
@@ -884,8 +898,10 @@ def main():
     if o.timeout < MINIMUM_TIMEOUT:
         parser.error(f"--timeout must be at least {MINIMUM_TIMEOUT} seconds")
     for host in o.allow_hosts:
-        if not host_name(host):
-            parser.error(f"--allow-host: {host!r} isn't a host name")
+        try:
+            allowed_host(host)
+        except ValueError as error:
+            parser.error(f"--allow-host: {error}")
     if o.daemon:
         pid = os.fork()
         if pid == 0:
@@ -913,7 +929,13 @@ def main():
         handler_class = NoLogWSGIRequestHandler
     index_file = os.path.abspath(o.index_file) if o.index_file else None
     at = AchilTerm(
-        o.cmd, index_file, o.lite, o.width, o.height, o.timeout, o.allow_hosts
+        o.cmd,
+        index_file=index_file,
+        lite=o.lite,
+        width=o.width,
+        height=o.height,
+        timeout=o.timeout,
+        allow_hosts=o.allow_hosts,
     )
     try:
         make_server(

@@ -11,6 +11,9 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	// typed or pasted, and not yet sent
 	var keybuf='';
 	var sending=0;
+	// retrying after a lost connection, or refused by the server for good
+	var retrying=false;
+	var refused=false;
 	var rmax=1;
 
 	var div=document.getElementById(id);
@@ -22,12 +25,23 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			var r=new XMLHttpRequest();
 			params.set('k',keybuf);
 			keybuf='';
+			// After a lost response, ask for the whole screen again.
+			if(retrying)
+				params.set('f',1);
+			else
+				params.delete('f');
 			r.open("POST","u",true);
+			// A request that gets no answer fails, and is tried again.
+			r.timeout=15000;
 			// Shows the server that this request comes from its own page.
 			r.setRequestHeader('X-Achilterm','1');
 			r.onreadystatechange = function () {
 				if (r.readyState==4) {
-					if(r.status==200) {
+					if(r.status==200 && r.responseXML) {
+						if(retrying) {
+							retrying=false;
+							document.title='Achilterm';
+						}
 						params.set('i',r.getResponseHeader('X-Achilterm-Instance') || '');
 						var de=r.responseXML.documentElement;
 						if(de.tagName=="pre") {
@@ -40,12 +54,17 @@ achilterm.Terminal_ctor=function(id,width,height) {
 						}
 						sending=0;
 						timeout=window.setTimeout(update,rmax);
-					} else if(r.status==0 || r.status>=500) {
-						// The server or the connection may only be away briefly.
+					} else if([0,200,408,429].includes(r.status) || r.status>=500) {
+						// The server or the connection may only be away briefly. Sending
+						// part of what was typed could run the wrong command, so drop it.
+						retrying=true;
+						keybuf='';
 						sending=0;
+						document.title='Achilterm (reconnecting, typing is ignored)';
 						timeout=window.setTimeout(update,2000);
 					} else {
 						// The server refused this page, and would again.
+						refused=true;
 						dterm.textContent=r.responseText || `Connection error status:${r.status}`;
 					}
 				}
@@ -54,6 +73,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 		}
 	}
 	function queue(s) {
+		if(retrying || refused)
+			return;
 		keybuf+=s;
 		if(sending==0) {
 			window.clearTimeout(timeout);

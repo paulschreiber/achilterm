@@ -52,8 +52,8 @@ def session_id(name):
     return hashlib.sha256(name.encode()).hexdigest()[:32]
 
 
-def terminal_query(name, keys=""):
-    fields = {"s": session_id(name), "w": 80, "h": 25, "c": 1, "k": keys}
+def terminal_query(name, keys="", **extra):
+    fields = {"s": session_id(name), "w": 80, "h": 25, "c": 1, "k": keys, **extra}
     return urllib.parse.urlencode(fields).encode()
 
 
@@ -107,15 +107,27 @@ def check_access():
             assert status(base, headers=headers) == expected, host
             assert status(url, terminal_query("h"), headers) == expected, host
 
-        # A page left over from before a restart gets no terminal.
-        stale = terminal_query("restart") + b"&i=0123456789abcdef"
-        assert status(url, stale) == 410
-        with urllib.request.urlopen(
-            urllib.request.Request(url, terminal_query("restart"), PAGE_HEADERS),
-            timeout=10,
-        ) as response:
+        # A page left over from before a restart gets no terminal, and is told why
+        # in plain text.
+        stale = terminal_query("restart", i="0123456789abcdef")
+        try:
+            fetch(url, stale)
+        except urllib.error.HTTPError as error:
+            assert error.code == 410, error.code
+            assert error.headers.get_content_type() == "text/plain", error.headers
+            assert b"restarted" in error.read()
+        else:
+            raise AssertionError("a page from before a restart was accepted")
+        request = urllib.request.Request(url, terminal_query("restart"), PAGE_HEADERS)
+        with urllib.request.urlopen(request, timeout=10) as response:
             instance = response.headers["X-Achilterm-Instance"]
-        assert status(url, terminal_query("restart") + f"&i={instance}".encode()) == 200
+        assert status(url, terminal_query("restart", i=instance)) == 200
+
+        # The whole screen is sent again when asked for, even if unchanged.
+        time.sleep(1)
+        fetch(url, terminal_query("restart"))
+        assert "<idem>" in fetch(url, terminal_query("restart"))
+        assert "<pre" in fetch(url, terminal_query("restart", f=1))
 
         # Other websites may not frame the page.
         with urllib.request.urlopen(base, timeout=10) as response:
@@ -125,7 +137,13 @@ def check_access():
         errors = server.communicate(timeout=10)[1].decode()
     assert "Traceback" not in errors, errors
 
-    for option in ("--timeout=89", "--allow-host=[nonsense"):
+    for option in (
+        "--timeout=89",
+        "--allow-host=[nonsense",
+        "--allow-host=https://terminal.example.com",
+        "--allow-host=*.example.com",
+        "--allow-host=a.example,b.example",
+    ):
         result = subprocess.run(
             [COMMAND, option], capture_output=True, timeout=10, check=False
         )
@@ -138,11 +156,8 @@ def check_expiry():
 
     def post(name):
         request = webob.Request.blank(
-            "/u", headers={**PAGE_HEADERS, "Host": "localhost"}
+            "/u", headers=PAGE_HEADERS, POST=terminal_query(name)
         )
-        request.method = "POST"
-        request.content_type = "application/x-www-form-urlencoded"
-        request.body = terminal_query(name)
         return request.get_response(app)
 
     try:
@@ -156,6 +171,7 @@ def check_expiry():
         for attempt in range(50):
             time.sleep(0.2)
             assert post("shown").status_code == 200
+            # Go on past the timeout, so that "shown" has to outlast it.
             if attempt > 12 and not is_running(pids["left"]):
                 break
         assert is_running(pids["shown"]), "a shown terminal was closed"
