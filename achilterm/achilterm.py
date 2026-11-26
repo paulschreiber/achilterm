@@ -564,19 +564,15 @@ class Multiplex:
         """Start a terminal and return its session ID, or None while stopping."""
         if not self.alive:
             return None
-        # Hold signals back until the child stops handling them as the server does.
-        mask = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
-        try:
-            pid, fd = pty.fork()
-            if pid == 0:
-                # The command gets the usual handling, whatever the server inherited,
-                # or Python chose, such as ignoring broken pipes.
-                others = (signal.SIGQUIT, signal.SIGPIPE, signal.SIGXFSZ)
-                for signum in (*STOP_SIGNALS, *others):
-                    signal.signal(signum, signal.SIG_DFL)
-        finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        pid, fd = pty.fork()
         if pid == 0:
+            # The command starts with the usual handling of every signal, and none
+            # blocked, whatever the server inherited or set, or Python chose, such
+            # as ignoring broken pipes.
+            for signum in signal.valid_signals() - {signal.SIGKILL, signal.SIGSTOP}:
+                with contextlib.suppress(OSError, ValueError):
+                    signal.signal(signum, signal.SIG_DFL)
+            signal.pthread_sigmask(signal.SIG_SETMASK, [])
             # The command mustn't inherit other terminals or connections.
             try:
                 end = max(map(int, os.listdir("/proc/self/fd"))) + 1
@@ -986,6 +982,14 @@ def main():
         handler_class = WSGIRequestHandler
     else:
         handler_class = NoLogWSGIRequestHandler
+    # Close the terminals when stopped, as by Ctrl-C, kill or closing the terminal
+    # running the server, unless a signal is meant to be ignored, as hangups are
+    # under nohup. Block these signals before starting any threads, which inherit
+    # that, so that they interrupt nothing and one thread can wait for them.
+    stop_signals = {
+        signum for signum in STOP_SIGNALS if signal.getsignal(signum) != signal.SIG_IGN
+    }
+    signal.pthread_sigmask(signal.SIG_BLOCK, stop_signals)
     index_file = os.path.abspath(o.index_file) if o.index_file else None
     at = AchilTerm(
         o.cmd,
@@ -996,31 +1000,22 @@ def main():
         allow_hosts=o.allow_hosts,
     )
 
-    stopping = False
-
-    def stop(signum, frame):
-        nonlocal stopping
-        # Only the first counts, so that closing the terminals isn't cut short.
-        if not stopping:
-            stopping = True
-            sys.exit()
-
     try:
-        # Close the terminals when stopped, as by Ctrl-C, kill or closing the
-        # terminal running the server, unless a signal is meant to be ignored, as
-        # hangups are under nohup.
-        for signum in STOP_SIGNALS:
-            if signal.getsignal(signum) != signal.SIG_IGN:
-                signal.signal(signum, stop)
-        make_server(
+        server = make_server(
             "localhost",
             int(o.port),
             at,
             handler_class=handler_class,
             server_class=ThreadingWSGIServer,
-        ).serve_forever()
+        )
+
+        def stop():
+            signal.sigwait(stop_signals)
+            server.shutdown()
+
+        threading.Thread(target=stop, daemon=True).start()
+        server.serve_forever()
     finally:
-        stopping = True
         at.multi.die()
         at.multi.thread.join()
 
