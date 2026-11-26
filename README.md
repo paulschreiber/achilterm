@@ -212,6 +212,9 @@ Changelog
 
 -  Fix the Paste button, which only worked in old browsers
 
+-  Fix special keys, such as Backspace, the arrows and Ctrl-C, in current
+   browsers, and remove support for Internet Explorer
+
 -  Fix large input, such as a long paste, being cut off
 
 -  Remove the GET option, which could record keystrokes in server logs;
