@@ -670,10 +670,12 @@ class Multiplex:
             if reason:
                 self.close_reasons[key] = reason
             if keep_screen:
-                # for as long as a slowed page may take to ask
+                # for as long as its page would have been waited for
+                limit = self.idle_limit(proc)
                 self.last_screens[key] = {
                     "term": proc["term"],
-                    "deadline": time.monotonic() + MINIMUM_TIMEOUT,
+                    "limit": limit,
+                    "deadline": time.monotonic() + limit,
                     "sent": False,
                 }
             with contextlib.suppress(OSError):
@@ -711,16 +713,19 @@ class Multiplex:
             if now > deadline:
                 self.ending[pid] = now + KILL_DELAY
 
+    def idle_limit(self, proc):
+        """How long to wait for a session's page to ask for its screen again."""
+        if proc["shown"] < 2:
+            # Only the request that started it has asked: the reply with its ID was
+            # probably lost, so don't wait as long.
+            return min(self.timeout, MINIMUM_TIMEOUT)
+        return self.timeout
+
     def expire(self):
         """Close the sessions that no browser is showing any more."""
         now = time.monotonic()
         for key, proc in list(self.proc.items()):
-            timeout = self.timeout
-            if proc["shown"] < 2:
-                # Only the request that started it has asked: the reply with its ID
-                # was probably lost, so don't keep it as long.
-                timeout = min(timeout, MINIMUM_TIMEOUT)
-            if proc["seen"] < now - timeout:
+            if proc["seen"] < now - self.idle_limit(proc):
                 self.proc_close(key, "because the page was disconnected")
         for key, last in list(self.last_screens.items()):
             if now > last["deadline"]:
@@ -787,6 +792,8 @@ class Multiplex:
                 self.last_screens.pop(key, None)
                 return False
             last["sent"] = True
+            # Allow as long again for a page that didn't get it to ask.
+            last["deadline"] = time.monotonic() + last["limit"]
             term = last["term"]
         try:
             if full:

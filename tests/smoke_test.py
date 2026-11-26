@@ -24,6 +24,7 @@ from xml.etree import ElementTree
 import webob
 
 from achilterm.achilterm import (
+    DEFAULT_TIMEOUT,
     MINIMUM_TIMEOUT,
     STOP_SIGNALS,
     AchilTerm,
@@ -558,6 +559,22 @@ def check_last_output():
             assert "last words" in screen_text(response.text), attempt
         assert post(app, session).status_code == 410
         assert session not in app.multi.last_screens
+
+        # The screen waits as long as the page would have been waited for, which
+        # is less for one that has asked only once, and again each time it's sent.
+        def time_left(session):
+            return app.multi.last_screens[session]["deadline"] - time.monotonic()
+
+        session = end_command(app)
+        assert MINIMUM_TIMEOUT - 10 < time_left(session) <= MINIMUM_TIMEOUT
+        session = new_app_session(app)
+        post(app, session)
+        app.multi.proc_write(session, "\r")
+        assert wait_until(lambda: session in app.multi.last_screens), "not kept"
+        assert DEFAULT_TIMEOUT - 10 < time_left(session) <= DEFAULT_TIMEOUT
+        app.multi.last_screens[session]["deadline"] = time.monotonic() + 1
+        assert post(app, session).status_code == 200
+        assert DEFAULT_TIMEOUT - 10 < time_left(session) <= DEFAULT_TIMEOUT
 
         # A screen that no page asks for isn't kept for ever.
         session = end_command(app)
