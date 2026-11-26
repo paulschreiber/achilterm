@@ -49,49 +49,21 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			query1=query0+"&k=";
 		debug('Color '+opt_color.className);
 	}
-	function mozilla_clipboard() {
-		 // mozilla sucks
-		try {
-			netscape.security.PrivilegeManager.enablePrivilege("UniversalXPConnect");
-		} catch (err) {
-			debug('Access denied, <a href="http://kb.mozillazine.org/Granting_JavaScript_access_to_the_clipboard" target="_blank">more info</a>');
-			return undefined;
-		}
-		var clip = Components.classes["@mozilla.org/widget/clipboard;1"].createInstance(Components.interfaces.nsIClipboard);
-		var trans = Components.classes["@mozilla.org/widget/transferable;1"].createInstance(Components.interfaces.nsITransferable);
-		if (!clip || !trans) {
-			return undefined;
-		}
-		trans.addDataFlavor("text/unicode");
-		clip.getData(trans,clip.kGlobalClipboard);
-		var str=new Object();
-		var strLength=new Object();
-		try {
-			trans.getTransferData("text/unicode",str,strLength);
-		} catch(err) {
-			return "";
-		}
-		if (str) {
-			str=str.value.QueryInterface(Components.interfaces.nsISupportsString);
-		}
-		if (str) {
-			return str.data.substring(0,strLength.value / 2);
-		} else {
-			return "";
-		}
-	}
 	function do_paste(event) {
-		var p=undefined;
-		if (window.clipboardData) {
-			p=window.clipboardData.getData("Text");
-		} else if(window.netscape) {
-			p=mozilla_clipboard();
+		// Browsers only offer the clipboard to pages served over HTTPS or from localhost.
+		if (!navigator.clipboard || !navigator.clipboard.readText) {
+			debug('Paste needs HTTPS or localhost');
+			return;
 		}
-		if (p) {
-			debug('Pasted');
-			queue(encodeURIComponent(p));
-		} else {
-		}
+		navigator.clipboard.readText().then(function(text) {
+			if (text) {
+				// Send line breaks as the Enter key does.
+				queue(encodeURIComponent(text.replace(/\r?\n/g, '\r')));
+				debug('Pasted');
+			}
+		}, function() {
+			debug('Clipboard access was denied');
+		});
 	}
 	function update() {
 //		debug("ts: "+((new Date).getTime())+" rmax:"+rmax);

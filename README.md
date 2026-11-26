@@ -192,6 +192,10 @@ Changelog
 
 -  Fix installation with pip, which failed when WebOb wasn't already present
 
+-  Fix the Paste button, which only worked in old browsers
+
+-  Fix large input, such as a long paste, being cut off
+
 -  Use ``html.escape()``, as ``cgi.escape()`` was removed from Python
 
 -  Drop Python 2 support; require Python 3.11 or later and WebOb 1.8.11 or
