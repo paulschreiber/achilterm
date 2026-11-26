@@ -138,15 +138,27 @@ def clamp(value, low, high):
     return max(low, min(value, high))
 
 
-def requested_size(fields):
-    """The size a page asks for a new terminal, or the usual one if it can't be."""
+def dimension(value, name, sizes):
+    """A width or height as a number, if a terminal can have it."""
     try:
-        width, height = int(fields.get("w", "")), int(fields.get("h", ""))
-    except ValueError:  # missing, or not a number
+        number = int(value)  # which allows leading zeros
+    except (TypeError, ValueError):
+        number = None
+    if number not in sizes:
+        raise ValueError(f"{name} must be a number from {sizes[0]} to {sizes[-1]}")
+    return number
+
+
+def requested_size(fields):
+    """The size a page asks for a new terminal, or the usual size if that's
+    missing or no terminal can have it."""
+    try:
+        return (
+            dimension(fields.get("w"), "w", WIDTHS),
+            dimension(fields.get("h"), "h", HEIGHTS),
+        )
+    except ValueError:
         return DEFAULT_WIDTH, DEFAULT_HEIGHT
-    if width in WIDTHS and height in HEIGHTS:
-        return width, height
-    return DEFAULT_WIDTH, DEFAULT_HEIGHT
 
 
 class Terminal:
@@ -577,7 +589,7 @@ class Multiplex:
             setattr(self, name, SynchronizedMethod(self.lock, orig))
         self.thread.start()
 
-    def create(self, w=80, h=25):
+    def create(self, w=DEFAULT_WIDTH, h=DEFAULT_HEIGHT):
         """Start a terminal and return its session ID, or None while stopping."""
         if not self.alive:
             return None
@@ -853,11 +865,14 @@ class AchilTerm:
         cmd=None,
         index_file=None,
         *,
-        width=80,
-        height=25,
+        width=DEFAULT_WIDTH,
+        height=DEFAULT_HEIGHT,
         timeout=DEFAULT_TIMEOUT,
         allow_hosts=(),
     ):
+        # These go into the page's script, so must be sizes it can be given.
+        width = dimension(width, "width", WIDTHS)
+        height = dimension(height, "height", HEIGHTS)
         os.chdir(os.path.normpath(os.path.dirname(__file__)))
         self.files = {}
         for i in ["css", "html", "js"]:
@@ -983,7 +998,6 @@ def main():
     parser.add_option(
         "-w",
         "--width",
-        type="int",
         dest="width",
         default=DEFAULT_WIDTH,
         help=f"set the width, from {WIDTHS[0]} to {WIDTHS[-1]} (default: %default)",
@@ -991,7 +1005,6 @@ def main():
     parser.add_option(
         "-H",
         "--height",
-        type="int",
         dest="height",
         default=DEFAULT_HEIGHT,
         help=f"set the height, from {HEIGHTS[0]} to {HEIGHTS[-1]} (default: %default)",
@@ -1014,12 +1027,11 @@ def main():
         "(default: only localhost)",
     )
     (o, _a) = parser.parse_args()
-    for name, value, sizes in (
-        ("--width", o.width, WIDTHS),
-        ("--height", o.height, HEIGHTS),
-    ):
-        if value not in sizes:
-            parser.error(f"{name} must be from {sizes[0]} to {sizes[-1]}")
+    try:
+        width = dimension(o.width, "--width", WIDTHS)
+        height = dimension(o.height, "--height", HEIGHTS)
+    except ValueError as error:
+        parser.error(str(error))
     if o.timeout < MINIMUM_TIMEOUT:
         parser.error(f"--timeout must be at least {MINIMUM_TIMEOUT} seconds")
     for host in o.allow_hosts:
@@ -1043,8 +1055,8 @@ def main():
     at = AchilTerm(
         o.cmd,
         index_file=index_file,
-        width=o.width,
-        height=o.height,
+        width=width,
+        height=height,
         timeout=o.timeout,
         allow_hosts=o.allow_hosts,
     )

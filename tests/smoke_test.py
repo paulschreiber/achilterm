@@ -30,6 +30,7 @@ from achilterm.achilterm import (
     STOP_SIGNALS,
     AchilTerm,
     Terminal,
+    requested_size,
 )
 
 COMMAND = os.path.join(os.path.dirname(sys.executable), "achilterm")
@@ -187,10 +188,7 @@ def check_access():
         "--timeout=89",
         "--width=abc",
         "--width=2",
-        "--width=256",
-        "--height=2",
         "--height=100",
-        "--height=",
         "--allow-host=[nonsense",
         "--allow-host=https://terminal.example.com",
         "--allow-host=*.example.com",
@@ -756,31 +754,44 @@ def check_unwritten_announcement(output):
 
 def check_sizes():
     """A new terminal has the size asked for, or the usual one if it can't."""
-    with running_app("sleep 30") as app:
-        for width, height, expected in (
-            ("80", "25", (80, 25)),
-            ("3", "3", (3, 3)),
-            ("255", "99", (255, 99)),
-            ("100", "30", (100, 30)),
-            ("2", "25", (80, 25)),
-            ("80", "100", (80, 25)),
-            ("-80", "25", (80, 25)),
-            ("abc", "25", (80, 25)),
-            ("80", "", (80, 25)),
-            ("8.5", "25", (80, 25)),
-            ("9" * 5000, "25", (80, 25)),
-            (None, "25", (80, 25)),
+    usual = (80, 25)
+    for width, height, expected in (
+        ("80", "25", usual),
+        ("3", "3", (3, 3)),
+        ("255", "99", (255, 99)),
+        ("080", "09", (80, 9)),
+        ("2", "30", usual),
+        ("256", "30", usual),
+        ("100", "2", usual),
+        ("100", "100", usual),
+        ("-80", "30", usual),
+        ("abc", "30", usual),
+        ("100", "", usual),
+        ("8.5", "30", usual),
+        ("9" * 5000, "30", usual),
+        (None, "30", usual),
+        (object(), "30", usual),  # as an uploaded file would be
+    ):
+        size = requested_size({"w": width, "h": height})
+        assert size == expected, (str(width)[:20], height, size)
+    assert requested_size({}) == usual
+
+    # The page's settings are checked the same way, and may have leading zeros.
+    for options in ({"width": 256}, {"height": 2}, {"width": None}):
+        with unittest.TestCase().assertRaisesRegex(ValueError, "must be a number"):
+            AchilTerm(**options)
+    with running_app("sleep 30", width="0100", height="030") as app:
+        page = webob.Request.blank("/").get_response(app).text
+        assert '("term",100,30)' in page, page
+        for fields, expected in (
+            ({"w": 100, "h": 30}, (100, 30)),
+            ({"w": "abc", "h": 30}, usual),
         ):
-            fields = {"s": "", "w": width, "h": height}
-            if width is None:
-                del fields["w"]
-            request = webob.Request.blank("/u", headers=PAGE_HEADERS, POST=fields)
-            response = request.get_response(app)
-            assert response.status_code == 200, (width, height, response.status)
+            response = post(app, **fields)
+            assert response.status_code == 200, (fields, response.status)
             response.decode_content()
             rows = screen_text(response.text).splitlines()
-            size = (len(rows[0]), len(rows))
-            assert size == expected, (str(width)[:20], height, size)
+            assert (len(rows[0]), len(rows)) == expected, (fields, len(rows))
 
 
 def check_many_descriptors():
