@@ -229,8 +229,11 @@ Changelog
 -  Fix terminals stopping when the server has more than about a thousand files
    and connections open
 
--  Clean up the processes of closed terminals, killing a command that is still
-   running after five seconds
+-  Clean up the processes of closed terminals, including when Achilterm is
+   stopped, killing anything left in a command's process group after five
+   seconds
+
+-  Exit, rather than hang, when the port is already in use
 
 -  Have the server issue random 128-bit session IDs, and refuse requests from
    other websites or for unknown host names (see ``--allow-host``)
