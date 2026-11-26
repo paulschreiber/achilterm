@@ -475,6 +475,7 @@ def check_stop(stop, ignored_by_command="HUP"):
             [COMMAND, f"--port={port}"], check=False, capture_output=True, timeout=10
         )
         assert second.returncode != 0, second
+        assert b"Achilterm at" not in second.stdout, "claimed to be running"
         server.send_signal(stop)
         if "TERM" in ignored_by_command:
             # While it waits to kill the command, the server takes no connections.
