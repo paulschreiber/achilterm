@@ -1,12 +1,8 @@
 achilterm={};
 achilterm.Terminal_ctor=function(id,width,height) {
-	// 128 random bits, which can't be guessed.
-	var sid=Array.from(crypto.getRandomValues(new Uint8Array(16)), function(byte) {
-		return byte.toString(16).padStart(2,'0');
-	}).join('');
-	// The fields sent with every request. c asks for colors, and i names the run
-	// of the server this page is talking to.
-	var params=new URLSearchParams({s: sid, w: width, h: height, c: 1, i: ''});
+	// The fields sent with every request. c asks for colors. s names the session,
+	// which the server starts, and names, when s is empty.
+	var params=new URLSearchParams({s: '', w: width, h: height, c: 1});
 	var timeout;
 	// typed or pasted, and not yet sent
 	var keybuf='';
@@ -88,7 +84,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 							retrying=false;
 							debug('Reconnected. Check the last command: some input may be lost.');
 						}
-						params.set('i',r.getResponseHeader('X-Achilterm-Instance') || '');
+						params.set('s',r.getResponseHeader('X-Achilterm-Session'));
 						var de=r.responseXML.documentElement;
 						if(de.tagName=="pre") {
                     					dterm.innerHTML = r.responseText;

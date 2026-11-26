@@ -29,7 +29,6 @@ import fcntl
 import glob
 import gzip
 import html
-import itertools
 import logging
 import mimetypes
 import optparse
@@ -98,8 +97,6 @@ MINIMUM_TIMEOUT = 90
 # Names a request may use for this server. Refusing others stops a website from
 # reaching it by pointing its own name at this machine.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-# Session IDs are 128 random bits, chosen by the page, as hexadecimal.
-SESSION_ID = re.compile("[0-9a-f]{32}")
 
 
 def host_name(host):
@@ -534,10 +531,9 @@ class Multiplex:
         # signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         self.cmd = cmd
         self.timeout = timeout
-        # The kernel reuses file descriptors, so sessions are keyed by a number
-        # that is never reused.
+        # Sessions are keyed by an ID that the server chooses, too random to be
+        # guessed or, unlike the kernel's file descriptors, to be used again.
         self.proc = {}
-        self.key_counter = itertools.count(1)
         # why a session was closed, by key, for those whose page should be told
         self.close_reasons = {}
         self.lock = threading.RLock()
@@ -593,7 +589,7 @@ class Multiplex:
         else:
             fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", h, w, 0, 0))
-            key = next(self.key_counter)
+            key = secrets.token_hex(16)
             self.proc[key] = {
                 "fd": fd,
                 "pid": pid,
@@ -741,9 +737,6 @@ class AchilTerm:
         self.mime[".js"] = "text/javascript; charset=UTF-8"
         self.hosts = LOCAL_HOSTS | {allowed_host(host) for host in allow_hosts}
         self.multi = Multiplex(cmd, timeout)
-        self.session = {}
-        # Tells a page whether this is still the server it was talking to.
-        self.instance = secrets.token_hex(8)
 
     def refusal(self, req, to_terminal):
         """The response to a request that mustn't be served, or None."""
@@ -759,14 +752,6 @@ class AchilTerm:
         # is never given.
         if "X-Achilterm" not in req.headers:
             return refuse(403, "Missing X-Achilterm header. Reload the page.")
-        if not SESSION_ID.fullmatch(req.POST.get("s", "")):
-            return refuse(400, "Invalid session ID. Reload the page.")
-        # A page that reconnects after a restart mustn't get a new terminal
-        # unnoticed, with whatever was typed meanwhile.
-        if req.POST.get("i", "") not in ("", self.instance):
-            return refuse(
-                410, "The server restarted. Reload the page to start a new terminal."
-            )
         return None
 
     def __call__(self, environ, start_response):
@@ -777,45 +762,39 @@ class AchilTerm:
             return refused(environ, start_response)
         res = webob.Response()
         if to_terminal:
-            s = req.POST["s"]
+            session = req.POST.get("s", "")
             k = req.POST.get("k", "")
             c = req.POST.get("c", "")
-            w = int(req.POST.get("w", 0))
-            h = int(req.POST.get("h", 0))
-            if s in self.session:
-                term = self.session[s]
-            else:
+            if not session:
+                # A page that names no session is new, and gets a terminal.
+                w = int(req.POST.get("w", 0))
+                h = int(req.POST.get("h", 0))
                 if not (w > 2 and w < 256 and h > 2 and h < 100):
                     w, h = 80, 25
-                term = self.session[s] = self.multi.create(w, h)
+                session = self.multi.create(w, h)
             if k:
-                self.multi.proc_write(term, k)
+                self.multi.proc_write(session, k)
             time.sleep(0.002)
             # A page that lost a response asks for the whole screen again.
-            dump = self.multi.dump(term, c, bool(req.POST.get("f")))
-            if dump is False and (reason := self.multi.close_reasons.get(term)):
-                # Don't quietly start another terminal: the person may go on
-                # typing as if it were the one that was closed.
-                refused = refuse(
-                    410,
-                    f"This terminal was closed {reason}. "
-                    "Reload the page to start a new one.",
-                )
+            dump = self.multi.dump(session, c, bool(req.POST.get("f")))
+            if dump is False:
+                # Don't start another terminal in its place: the person may go on
+                # typing as if it were the one that ended.
+                reason = self.multi.close_reasons.get(session)
+                ended = "This terminal session has ended"
+                if reason:
+                    ended = f"{ended} {reason}"
+                refused = refuse(410, f"{ended}. Reload the page to start a new one.")
                 return refused(environ, start_response)
             res.content_type = "text/xml"
-            res.headers["X-Achilterm-Instance"] = self.instance
-            if isinstance(dump, str):
-                res.content_encoding = "gzip"
-                zbuf = BytesIO()
-                zfile = gzip.GzipFile(mode="wb", fileobj=zbuf)
-                zfile.write("".join(dump).encode("utf-8"))
-                zfile.close()
-                zbuf = zbuf.getvalue()
-                res.write(zbuf)
-            else:
-                self.session.pop(s, None)
-                res.write('<?xml version="1.0"?><idem></idem>')
-        # 			print "sessions %r"%self.session
+            res.headers["X-Achilterm-Session"] = session
+            res.content_encoding = "gzip"
+            zbuf = BytesIO()
+            zfile = gzip.GzipFile(mode="wb", fileobj=zbuf)
+            zfile.write("".join(dump).encode("utf-8"))
+            zfile.close()
+            zbuf = zbuf.getvalue()
+            res.write(zbuf)
         else:
             # Another website mustn't show the terminal inside its own page, where
             # it could trick someone into typing into it.

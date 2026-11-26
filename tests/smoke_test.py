@@ -3,7 +3,6 @@
 import contextlib
 import functools
 import gzip
-import hashlib
 import os
 import random
 import re
@@ -53,13 +52,26 @@ def status(url, data=None, headers=PAGE_HEADERS):
     return 200
 
 
-def session_id(name):
-    return hashlib.sha256(name.encode()).hexdigest()[:32]
-
-
-def terminal_query(name, keys="", **extra):
-    fields = {"s": session_id(name), "w": 80, "h": 25, "c": 1, "k": keys, **extra}
+def terminal_query(session="", keys="", **extra):
+    """A page's request. An empty session asks for a new terminal."""
+    fields = {"s": session, "w": 80, "h": 25, "c": 1, "k": keys, **extra}
     return urllib.parse.urlencode(fields).encode()
+
+
+def new_session(url):
+    request = urllib.request.Request(url, terminal_query(), PAGE_HEADERS)
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return response.headers["X-Achilterm-Session"]
+
+
+def refusal(url, data):
+    """The status and text of a response refusing a request."""
+    try:
+        fetch(url, data)
+    except urllib.error.HTTPError as error:
+        assert error.headers.get_content_type() == "text/plain", error.headers
+        return error.code, error.read().decode()
+    raise AssertionError(f"{data!r} was accepted")
 
 
 def is_running(pid):
@@ -93,11 +105,18 @@ def check_access():
     server, port, base = start_server("--allow-host=Terminal.Example.com:443")
     url = f"{base}u"
     try:
-        # Only requests from the terminal page, with a random session ID.
-        assert status(url, terminal_query("a"), headers={}) == 403
-        for bad in ("", "1", "123456789", "g" * 32, "a" * 33):
-            query = urllib.parse.urlencode({"s": bad, "k": ""}).encode()
-            assert status(url, query) == 400, bad
+        # Only requests from the terminal page.
+        assert status(url, terminal_query(), headers={}) == 403
+
+        # The server chooses a new terminal's session ID, and only an ID it
+        # issued reaches a terminal. One from before a restart, say, is refused.
+        session = new_session(url)
+        assert re.fullmatch("[0-9a-f]{32}", session), session
+        assert new_session(url) != session
+        for unknown in ("1", "a" * 32, session[:-1], session + "a"):
+            code, text = refusal(url, terminal_query(unknown))
+            assert code == 410, (unknown, code)
+            assert "session has ended. Reload" in text, text
 
         # Only for localhost and the names that were allowed.
         for host, expected in (
@@ -110,29 +129,13 @@ def check_access():
         ):
             headers = {**PAGE_HEADERS, "Host": host}
             assert status(base, headers=headers) == expected, host
-            assert status(url, terminal_query("h"), headers) == expected, host
-
-        # A page left over from before a restart gets no terminal, and is told why
-        # in plain text.
-        stale = terminal_query("restart", i="0123456789abcdef")
-        try:
-            fetch(url, stale)
-        except urllib.error.HTTPError as error:
-            assert error.code == 410, error.code
-            assert error.headers.get_content_type() == "text/plain", error.headers
-            assert b"restarted" in error.read()
-        else:
-            raise AssertionError("a page from before a restart was accepted")
-        request = urllib.request.Request(url, terminal_query("restart"), PAGE_HEADERS)
-        with urllib.request.urlopen(request, timeout=10) as response:
-            instance = response.headers["X-Achilterm-Instance"]
-        assert status(url, terminal_query("restart", i=instance)) == 200
+            assert status(url, terminal_query(), headers) == expected, host
 
         # The whole screen is sent again when asked for, even if unchanged.
         time.sleep(1)
-        fetch(url, terminal_query("restart"))
-        assert "<idem>" in fetch(url, terminal_query("restart"))
-        assert "<pre" in fetch(url, terminal_query("restart", f=1))
+        fetch(url, terminal_query(session))
+        assert "<idem>" in fetch(url, terminal_query(session))
+        assert "<pre" in fetch(url, terminal_query(session, f=1))
 
         # Other websites may not frame the page.
         with urllib.request.urlopen(base, timeout=10) as response:
@@ -218,11 +221,17 @@ def check_escape_sequences():
             ElementTree.fromstring(term.dumphtml().encode())
 
 
-def post(app, name, keys=""):
+def post(app, session="", keys=""):
     """Ask an application running here for a terminal's screen."""
-    query = terminal_query(name, keys)
+    query = terminal_query(session, keys)
     request = webob.Request.blank("/u", headers=PAGE_HEADERS, POST=query)
     return request.get_response(app)
+
+
+def open_session(app):
+    response = post(app)
+    assert response.status_code == 200, response.status
+    return response.headers["X-Achilterm-Session"]
 
 
 @contextlib.contextmanager
@@ -250,16 +259,15 @@ def wait_for_screen(send, keys, pattern):
 def check_expiry():
     # Runs the application here, to use a timeout shorter than the command allows.
     with running_app("while :; do echo busy; sleep 1; done", timeout=2) as app:
-        pids = {}
+        sessions, pids = {}, {}
         for name in ("shown", "left"):
-            assert post(app, name).status_code == 200
-            key = app.session[session_id(name)]
-            pids[name] = app.multi.proc[key]["pid"]
+            sessions[name] = open_session(app)
+            pids[name] = app.multi.proc[sessions[name]]["pid"]
         # A terminal closes once no page asks for it, even while it has output,
         # and stays open while one does.
         for attempt in range(50):
             time.sleep(0.2)
-            assert post(app, "shown").status_code == 200
+            assert post(app, sessions["shown"]).status_code == 200
             # Go on past the timeout, so that "shown" has to outlast it.
             if attempt > 12 and not is_running(pids["left"]):
                 break
@@ -267,7 +275,7 @@ def check_expiry():
         assert not is_running(pids["left"]), "an abandoned terminal stayed open"
         # Its page is told, every time, and gets no new terminal.
         for attempt in range(2):
-            response = post(app, "left")
+            response = post(app, sessions["left"])
             assert response.status_code == 410, response.status
             assert "disconnected. Reload" in response.text, response.text
         assert len(app.multi.proc) == 1, app.multi.proc
@@ -280,24 +288,23 @@ def check_output_fault():
         raise RuntimeError("deliberate failure for this test")
 
     with running_app("while :; do echo busy; sleep 1; done") as app:
-        assert post(app, "other").status_code == 200
+        other = open_session(app)
         # reading the output, then drawing the screen
         for method in ("write", "dumphtml"):
-            assert post(app, method).status_code == 200
-            key = app.session[session_id(method)]
+            session = open_session(app)
             # The error is expected, so collect its log entry instead of showing it.
             with unittest.TestCase().assertLogs("achilterm.achilterm") as logs:
-                setattr(app.multi.proc[key]["term"], method, fail)
+                setattr(app.multi.proc[session]["term"], method, fail)
                 for attempt in range(50):
                     time.sleep(0.2)
-                    response = post(app, method)
+                    response = post(app, session)
                     if response.status_code != 200:
                         break
             assert response.status_code == 410, response.status
             assert "server error" in response.text, response.text
             errors = [record.exc_info[0] for record in logs.records]
             assert errors == [RuntimeError], errors
-        assert post(app, "other").status_code == 200
+        assert post(app, other).status_code == 200
         assert app.multi.thread.is_alive()
 
 
@@ -314,9 +321,10 @@ def check_many_descriptors():
         while filler[-1] < 1024:
             filler.append(os.open(os.devnull, os.O_RDONLY))
         with running_app('read line; echo "got $line"; sleep 30') as app:
+            session = open_session(app)
 
             def send(keys):
-                response = post(app, "high", keys)
+                response = post(app, session, keys)
                 response.decode_content()
                 return response.text
 
@@ -340,15 +348,20 @@ def main():
 
     server, port, base = start_server()
 
-    def terminal(session, keys=""):
+    # the session ID of each terminal this test opens, by the name used here
+    sessions = {}
+
+    def terminal(name, keys=""):
+        if name not in sessions:
+            sessions[name] = new_session(f"{base}u")
         # POST, as the browser does, so that large input fits.
-        response = fetch(f"{base}u", terminal_query(session, keys))
+        response = fetch(f"{base}u", terminal_query(sessions[name], keys))
         # The browser can't update the screen from invalid XML.
         ElementTree.fromstring(response.encode())
         return response
 
-    def expect(session, keys, pattern):
-        send = functools.partial(terminal, session)
+    def expect(name, keys, pattern):
+        send = functools.partial(terminal, name)
         return wait_for_screen(send, keys, pattern)
 
     try:
@@ -368,8 +381,9 @@ def main():
         time.sleep(1)
         terminal("newer")
         expect("newer", "echo private$((20+1))\r", "private21")
-        screen = terminal("stale", "\x15echo intruder$((30+1))\r")
-        assert "private21" not in screen_text(screen), screen_text(screen)
+        query = terminal_query(sessions["stale"], "\x15echo intruder$((30+1))\r")
+        code, text = refusal(f"{base}u", query)
+        assert code == 410, (code, text)
         time.sleep(1)
         screen = terminal("newer", " ")
         assert "intruder31" not in screen_text(screen), screen_text(screen)
@@ -383,7 +397,7 @@ def main():
             # Ending one session must leave the others working.
             terminal("first", "exit\r")
             time.sleep(1)
-            terminal("first")
+            assert status(f"{base}u", terminal_query(sessions["first"])) == 410
             expect("second", "echo marker$((40+2))\r", "marker42")
             terminal("third")
 
