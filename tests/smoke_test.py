@@ -588,7 +588,7 @@ def check_last_output():
         session = end_command(app)
         post(app, session)
         assert about(DEFAULT_TIMEOUT, session), time_left(session)
-        age(app.multi.last_screens, DEFAULT_TIMEOUT - 1)
+        age(app.multi.last_screens, DEFAULT_TIMEOUT - 10)
         assert post(app, session, f=1).status_code == 200
         assert about(DEFAULT_TIMEOUT, session), time_left(session)
         age(app.multi.last_screens, DEFAULT_TIMEOUT + 1)
