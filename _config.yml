@@ -1,13 +1,4 @@
 theme: jekyll-theme-hacker
-baseurl: /achilterm
 title: Achilterm
 description: Achilterm is a lightweight UTF-8 web based terminal.
 show_downloads: true
-repository: paulschreiber/achilterm
-project:
-  is_project_page: true
-  repository_url: https://github.com/paulschreiber/achilterm
-  owner_name: paulschreiber
-  owner_url: https://github.com/paulschreiber
-  zip_url: https://github.com/paulschreiber/achilterm/archive/refs/heads/master.zip
-  tar_url: https://github.com/paulschreiber/achilterm/archive/refs/heads/master.tar.gz
