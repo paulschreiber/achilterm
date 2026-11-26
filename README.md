@@ -37,23 +37,34 @@ To install the latest release from PyPI into its own virtual environment:
     $ sudo /opt/achilterm/bin/pip install achilterm-ng
     $ sudo ln -s /opt/achilterm/bin/achilterm /usr/local/bin/achilterm
 
-To install the development version from GitHub:
+Development
+-----------
+
+Development uses [uv](https://docs.astral.sh/uv/). To get the source and set
+up an environment with the development tools:
 
     $ git clone https://github.com/paulschreiber/achilterm.git
     $ cd achilterm
-    $ python3 -m venv .venv
-    $ .venv/bin/pip install .
+    $ uv sync
 
-To lint the code and check its formatting (needs pip 25.1 or later):
+To run the development version:
 
-    $ .venv/bin/pip install --upgrade pip
-    $ .venv/bin/pip install --group dev
-    $ .venv/bin/ruff check .
-    $ .venv/bin/ruff format --check .
+    $ uv run achilterm
+
+To lint the code and check its formatting:
+
+    $ uv run ruff check .
+    $ uv run ruff format --check .
 
 To run the same checks, plus file cleanup, automatically before each commit:
 
-    $ .venv/bin/pre-commit install
+    $ uv run pre-commit install
+
+After changing dependencies in ``pyproject.toml``, update ``uv.lock`` with
+``uv lock`` and commit both files.
+
+Running
+-------
 
 To run Achilterm after installation:
 
