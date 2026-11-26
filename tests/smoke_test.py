@@ -185,6 +185,12 @@ def check_access():
 
     for option in (
         "--timeout=89",
+        "--width=abc",
+        "--width=2",
+        "--width=256",
+        "--height=2",
+        "--height=100",
+        "--height=",
         "--allow-host=[nonsense",
         "--allow-host=https://terminal.example.com",
         "--allow-host=*.example.com",
@@ -748,6 +754,35 @@ def check_unwritten_announcement(output):
     assert server.returncode == 0 and not errors, (server.returncode, errors)
 
 
+def check_sizes():
+    """A new terminal has the size asked for, or the usual one if it can't."""
+    with running_app("sleep 30") as app:
+        for width, height, expected in (
+            ("80", "25", (80, 25)),
+            ("3", "3", (3, 3)),
+            ("255", "99", (255, 99)),
+            ("100", "30", (100, 30)),
+            ("2", "25", (80, 25)),
+            ("80", "100", (80, 25)),
+            ("-80", "25", (80, 25)),
+            ("abc", "25", (80, 25)),
+            ("80", "", (80, 25)),
+            ("8.5", "25", (80, 25)),
+            ("9" * 5000, "25", (80, 25)),
+            (None, "25", (80, 25)),
+        ):
+            fields = {"s": "", "w": width, "h": height}
+            if width is None:
+                del fields["w"]
+            request = webob.Request.blank("/u", headers=PAGE_HEADERS, POST=fields)
+            response = request.get_response(app)
+            assert response.status_code == 200, (width, height, response.status)
+            response.decode_content()
+            rows = screen_text(response.text).splitlines()
+            size = (len(rows[0]), len(rows))
+            assert size == expected, (str(width)[:20], height, size)
+
+
 def check_many_descriptors():
     """Terminals must work when their descriptors are numbered 1024 or higher."""
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -903,6 +938,7 @@ def main():
     check_last_output()
     check_failed_start()
     check_without_path()
+    check_sizes()
     check_many_descriptors()
     check_announcement()
     print("smoke test passed")

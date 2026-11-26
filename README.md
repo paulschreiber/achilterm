@@ -141,8 +141,8 @@ Commandline usage
       -l, --log                  log requests to stderr (default: quiet mode)
       -i INDEX_FILE, --index=INDEX_FILE
                                  default index file (default: achilterm.html)
-      -w WIDTH, --width=WIDTH    set the width (default: 80)
-      -H HEIGHT, --height=HEIGHT set the height (default: 25)
+      -w WIDTH, --width=WIDTH    set the width, from 3 to 255 (default: 80)
+      -H HEIGHT, --height=HEIGHT set the height, from 3 to 99 (default: 25)
       --timeout=TIMEOUT          close a terminal not shown by a browser for this
                                  many seconds (default: 300, at least 90)
       --allow-host=NAME          also accept requests for this host name; repeat
@@ -235,6 +235,10 @@ Changelog
 
 -  Send typing and show its output promptly, rather than sometimes after up to
    two seconds
+
+-  Reject a ``--width`` or ``--height`` that can't be used, instead of ignoring
+   it or serving a blank page, and fix a server error for a request with a size
+   that isn't a number
 
 -  Fix large input, such as a long paste, being cut off
 
