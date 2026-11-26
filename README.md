@@ -199,7 +199,8 @@ Changelog
 -  Publish as ``achilterm-ng``
 
 -  Remove Achiltermlite, the stripped-down page, and its ``-L``/``--lite``
-   option
+   option; a custom ``--index`` page based on it must use ``achilterm.js`` and
+   ``achilterm.css`` instead
 
 -  Serve requests on threads, so an idle connection no longer blocks others
 

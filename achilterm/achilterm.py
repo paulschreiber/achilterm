@@ -722,6 +722,7 @@ class AchilTerm:
         self,
         cmd=None,
         index_file=None,
+        *,
         width=80,
         height=25,
         timeout=DEFAULT_TIMEOUT,
