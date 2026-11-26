@@ -238,6 +238,9 @@ Changelog
 
 -  Exit, rather than hang, when the port is already in use
 
+-  Notice on macOS and BSD that a command has ended, instead of leaving its
+   terminal open
+
 -  Have the server issue random 128-bit session IDs, and refuse requests from
    other websites or for unknown host names (see ``--allow-host``)
 

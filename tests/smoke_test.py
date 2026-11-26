@@ -497,6 +497,22 @@ def check_stop(stop, ignored_by_command="HUP"):
         server.communicate(timeout=10)
 
 
+def check_end_of_output():
+    """A terminal closes when reading it returns nothing, as on macOS and BSD."""
+    real_read = os.read
+    with running_app("sleep 30") as app:
+        session = new_app_session(app)
+        fd = app.multi.proc[session]["fd"]
+
+        def read(descriptor, size):
+            return b"" if descriptor == fd else real_read(descriptor, size)
+
+        with mock.patch("os.read", read), app.multi.lock:
+            app.multi.proc_read(session)
+        assert session not in app.multi.proc, "the terminal stayed open"
+        assert post(app, session).status_code == 410
+
+
 def check_many_descriptors():
     """Terminals must work when their descriptors are numbered 1024 or higher."""
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -637,6 +653,7 @@ def main():
     check_stop(signal.SIGHUP)
     # Only killing ends this command, which takes the server several seconds.
     check_stop(signal.SIGTERM, "HUP TERM")
+    check_end_of_output()
     check_many_descriptors()
     print("smoke test passed")
 
