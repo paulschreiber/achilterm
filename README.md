@@ -230,6 +230,9 @@ Changelog
    cursor off the screen or change the screen's size, including the common
    "reset scroll region"
 
+-  Fix terminals stopping when the server has more than about a thousand files
+   and connections open
+
 -  Use random 128-bit session IDs, and refuse requests from other websites or
    for unknown host names (see ``--allow-host``)
 
