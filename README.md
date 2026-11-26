@@ -149,23 +149,9 @@ Configuration example
 Changelog
 ---------
 
-### 0.31 (November 2026)
+### 0.30 (November 2026)
 
 -  Publish as ``achilterm-ng``
-
--  Fix installation with pip, which failed when WebOb wasn't already present
-
--  Require Python 3.11 or later and WebOb 1.8.9 or later
-
--  Replace ``setup.py`` with ``pyproject.toml``
-
--  Fix an error serving the terminal's JavaScript on Python 3.11
-
--  Link to the source code from the terminal page
-
--  Move the project to GitHub
-
-### 0.30 (November 2026)
 
 -  Serve requests on threads, so an idle connection no longer blocks others
 
@@ -176,11 +162,22 @@ Changelog
 
 -  Keep running if a session closes while Achilterm is waiting for output
 
+-  Fix an error serving the terminal's JavaScript on Python 3.11
+
+-  Fix installation with pip, which failed when WebOb wasn't already present
+
 -  Use ``html.escape()``, as ``cgi.escape()`` was removed from Python
 
--  Drop Python 2 support; Python 3.2 or later is required
+-  Drop Python 2 support; require Python 3.11 or later and WebOb 1.8.9 or
+   later
+
+-  Replace ``setup.py`` with ``pyproject.toml``
 
 -  Add a systemd service unit
+
+-  Link to the source code from the terminal page
+
+-  Move the project to GitHub
 
 Old versions
 ------------
