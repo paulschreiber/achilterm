@@ -20,7 +20,7 @@ from xml.etree import ElementTree
 
 import webob
 
-from achilterm.achilterm import AchilTerm, Terminal
+from achilterm.achilterm import UNUSED_TIMEOUT, AchilTerm, Terminal
 
 COMMAND = os.path.join(os.path.dirname(sys.executable), "achilterm")
 
@@ -35,13 +35,18 @@ def free_port():
 PAGE_HEADERS = {"X-Achilterm": "1"}
 
 
-def fetch(url, data=None, headers=PAGE_HEADERS):
+def exchange(url, data=None, headers=PAGE_HEADERS):
+    """The headers and text of a response."""
     request = urllib.request.Request(url, data, headers)
     with urllib.request.urlopen(request, timeout=10) as response:
         body = response.read()
         if response.headers.get("Content-Encoding") == "gzip":
             body = gzip.decompress(body)
-        return body.decode()
+        return response.headers, body.decode()
+
+
+def fetch(url, data=None, headers=PAGE_HEADERS):
+    return exchange(url, data, headers)[1]
 
 
 def status(url, data=None, headers=PAGE_HEADERS):
@@ -59,9 +64,7 @@ def terminal_query(session="", keys="", **extra):
 
 
 def new_session(url):
-    request = urllib.request.Request(url, terminal_query(), PAGE_HEADERS)
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return response.headers["X-Achilterm-Session"]
+    return exchange(url, terminal_query())[0]["X-Achilterm-Session"]
 
 
 def refusal(url, data):
@@ -113,6 +116,7 @@ def check_access():
         session = new_session(url)
         assert re.fullmatch("[0-9a-f]{32}", session), session
         assert new_session(url) != session
+        assert status(url, urllib.parse.urlencode({"k": ""}).encode()) == 400
         for unknown in ("1", "a" * 32, session[:-1], session + "a"):
             code, text = refusal(url, terminal_query(unknown))
             assert code == 410, (unknown, code)
@@ -129,7 +133,7 @@ def check_access():
         ):
             headers = {**PAGE_HEADERS, "Host": host}
             assert status(base, headers=headers) == expected, host
-            assert status(url, terminal_query(), headers) == expected, host
+            assert status(url, terminal_query(session), headers) == expected, host
 
         # The whole screen is sent again when asked for, even if unchanged.
         time.sleep(1)
@@ -228,7 +232,7 @@ def post(app, session="", keys=""):
     return request.get_response(app)
 
 
-def open_session(app):
+def new_app_session(app):
     response = post(app)
     assert response.status_code == 200, response.status
     return response.headers["X-Achilterm-Session"]
@@ -261,8 +265,9 @@ def check_expiry():
     with running_app("while :; do echo busy; sleep 1; done", timeout=2) as app:
         sessions, pids = {}, {}
         for name in ("shown", "left"):
-            sessions[name] = open_session(app)
+            sessions[name] = new_app_session(app)
             pids[name] = app.multi.proc[sessions[name]]["pid"]
+            assert post(app, sessions[name]).status_code == 200
         # A terminal closes once no page asks for it, even while it has output,
         # and stays open while one does.
         for attempt in range(50):
@@ -281,6 +286,18 @@ def check_expiry():
         assert len(app.multi.proc) == 1, app.multi.proc
 
 
+def check_unused():
+    """A new terminal closes soon if its page never asks for it again."""
+    with running_app("sleep 60") as app:
+        unused, used = new_app_session(app), new_app_session(app)
+        assert post(app, used).status_code == 200
+        with app.multi.lock:
+            for proc in app.multi.proc.values():
+                proc["seen"] -= UNUSED_TIMEOUT + 1
+            app.multi.expire()
+            assert list(app.multi.proc) == [used], (unused, used)
+
+
 def check_output_fault():
     """If one terminal's output can't be handled, only that one is closed."""
 
@@ -288,10 +305,10 @@ def check_output_fault():
         raise RuntimeError("deliberate failure for this test")
 
     with running_app("while :; do echo busy; sleep 1; done") as app:
-        other = open_session(app)
+        other = new_app_session(app)
         # reading the output, then drawing the screen
         for method in ("write", "dumphtml"):
-            session = open_session(app)
+            session = new_app_session(app)
             # The error is expected, so collect its log entry instead of showing it.
             with unittest.TestCase().assertLogs("achilterm.achilterm") as logs:
                 setattr(app.multi.proc[session]["term"], method, fail)
@@ -321,7 +338,7 @@ def check_many_descriptors():
         while filler[-1] < 1024:
             filler.append(os.open(os.devnull, os.O_RDONLY))
         with running_app('read line; echo "got $line"; sleep 30') as app:
-            session = open_session(app)
+            session = new_app_session(app)
 
             def send(keys):
                 response = post(app, session, keys)
@@ -447,6 +464,7 @@ def main():
     check_access()
     check_escape_sequences()
     check_expiry()
+    check_unused()
     check_output_fault()
     check_many_descriptors()
     print("smoke test passed")

@@ -1,7 +1,7 @@
 achilterm={};
 achilterm.Terminal_ctor=function(id,width,height) {
-	// The fields sent with every request. c asks for colors. s names the session,
-	// which the server starts, and names, when s is empty.
+	// The fields sent with every request. c asks for colors. s is the session ID:
+	// while it's empty, the server starts a new session and returns its ID.
 	var params=new URLSearchParams({s: '', w: width, h: height, c: 1});
 	var timeout;
 	// typed or pasted, and not yet sent
@@ -79,12 +79,13 @@ achilterm.Terminal_ctor=function(id,width,height) {
 //				debug("xhr:"+((new Date).getTime())+" state:"+r.readyState+" status:"+r.status+" statusText:"+r.statusText);
 				if (r.readyState==4) {
 					sled.className='off';
-					if(r.status==200 && r.responseXML) {
+					var session=r.getResponseHeader('X-Achilterm-Session');
+					if(r.status==200 && r.responseXML && session) {
 						if(retrying) {
 							retrying=false;
 							debug('Reconnected. Check the last command: some input may be lost.');
 						}
-						params.set('s',r.getResponseHeader('X-Achilterm-Session'));
+						params.set('s',session);
 						var de=r.responseXML.documentElement;
 						if(de.tagName=="pre") {
                     					dterm.innerHTML = r.responseText;
@@ -157,7 +158,8 @@ achilterm.Terminal_ctor=function(id,width,height) {
 	// Special keys and Ctrl or Alt combinations. Anything not sent here is left
 	// to the browser, and characters then arrive as keypress events.
 	function keydown(ev) {
-		if(ev.metaKey || ev.isComposing || is_altgr(ev))
+		// A refused page leaves every key to the browser, so it can be reloaded.
+		if(refused || ev.metaKey || ev.isComposing || is_altgr(ev))
 			return;
 		var k;
 		if(ev.ctrlKey && ev.altKey) {
@@ -177,7 +179,7 @@ achilterm.Terminal_ctor=function(id,width,height) {
 			send_key(ev,k);
 	}
 	function keypress(ev) {
-		if(ev.metaKey || ((ev.ctrlKey || ev.altKey) && !is_altgr(ev)))
+		if(refused || ev.metaKey || ((ev.ctrlKey || ev.altKey) && !is_altgr(ev)))
 			return;
 		if(ev.key=='Enter')
 			send_key(ev,'\r');
