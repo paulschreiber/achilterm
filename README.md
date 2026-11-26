@@ -151,16 +151,12 @@ Apache configuration example
 ----------------------------
 
 Anyone who can reach Achilterm can try to log in, so put it behind HTTPS and
-restrict who can reach it. This Apache 2.4 example serves it at
-``https://terminal.example.com/achilterm/`` and asks for a password before
-showing the terminal's own login.
+consider restricting who can reach it. This Apache 2.4 example serves it at
+``https://terminal.example.com/achilterm/``.
 
-Enable the modules it needs, and create a user for the password prompt (on
-Debian or Ubuntu):
+Enable the modules it needs (on Debian or Ubuntu):
 
-    $ sudo a2enmod ssl proxy proxy_http auth_basic
-    $ sudo apt install apache2-utils
-    $ sudo htpasswd -c -B /etc/apache2/achilterm.htpasswd yourname
+    $ sudo a2enmod ssl proxy proxy_http
 
 Add this virtual host, using your own server name and certificate:
 
@@ -174,10 +170,7 @@ Add this virtual host, using your own server name and certificate:
         RedirectMatch permanent "^/achilterm$" "/achilterm/"
 
         <Location "/achilterm/">
-            AuthType Basic
-            AuthName "Terminal"
-            AuthUserFile /etc/apache2/achilterm.htpasswd
-            Require valid-user
+            Require all granted
 
             ProxyPass "http://localhost:8022/"
             ProxyPassReverse "http://localhost:8022/"
@@ -189,17 +182,13 @@ Then check the configuration and reload Apache:
     $ sudo apache2ctl configtest
     $ sudo systemctl reload apache2
 
-To limit access to known networks as well, replace ``Require valid-user`` with:
+To limit access to known networks, replace ``Require all granted`` with:
 
-    <RequireAll>
-        Require valid-user
-        Require ip 192.0.2.0/24
-    </RequireAll>
+    Require ip 192.0.2.0/24
 
 Logins made through Achilterm reach SSH from ``localhost``, so tools that
 block addresses after failed logins, such as fail2ban, normally ignore them.
-Choose a strong password for the Apache prompt, and consider limiting
-repeated attempts there.
+Use strong passwords on every account that can log in over SSH.
 
 Changelog
 ---------
@@ -239,7 +228,7 @@ Changelog
 
 -  Link to the source code from the terminal page
 
--  Update the Apache example for Apache 2.4, with access control
+-  Update the Apache example for Apache 2.4
 
 -  Move the project to GitHub
 
