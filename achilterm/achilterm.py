@@ -638,7 +638,7 @@ class Multiplex:
             name = cmd[0]
             os.execvpe(cmd[0], cmd, env)
         except BaseException as error:  # noqa: BLE001 (say why, whatever it is)
-            reason = str(error) or type(error).__name__
+            reason = f"{type(error).__name__}: {error}"
             message = f"achilterm: couldn't start {name}: {reason}\r\n"
             os.write(2, message.encode(errors="replace"))
         finally:

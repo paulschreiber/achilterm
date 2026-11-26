@@ -517,8 +517,9 @@ def check_end_of_output():
 def check_failed_start():
     """A command that can't be started says so, and leaves nothing running."""
     # an expected kind of error, and any other
-    check_failed_exec(FileNotFoundError(2, "No such file or directory"), "No such")
-    check_failed_exec(AttributeError(), "AttributeError")
+    failure = FileNotFoundError(2, "No such file or directory")
+    check_failed_exec(failure, "FileNotFoundError: [Errno 2] No such")
+    check_failed_exec(AttributeError(), "AttributeError:")
 
     # A terminal that can't be set up is closed again.
     failure = OSError("deliberate failure")
@@ -529,6 +530,27 @@ def check_failed_start():
         ):
             app.multi.create()
         assert not app.multi.proc, app.multi.proc
+        assert wait_until(lambda: not app.multi.ending), app.multi.ending
+
+        # So is one whose caller is interrupted as signals are let through again.
+        real_sigmask, server_pid = signal.pthread_sigmask, os.getpid()
+
+        def interrupt(how, mask):
+            result = real_sigmask(how, mask)
+            # only here, not in the new process, which sets its own mask
+            if how == signal.SIG_SETMASK and os.getpid() == server_pid:
+                raise KeyboardInterrupt
+            return result
+
+        before = real_sigmask(signal.SIG_BLOCK, [])
+        with app.multi.lock:  # so that only create() can close the session
+            with (
+                mock.patch("signal.pthread_sigmask", interrupt),
+                unittest.TestCase().assertRaises(KeyboardInterrupt),
+            ):
+                app.multi.create()
+            assert not app.multi.proc, app.multi.proc
+        assert real_sigmask(signal.SIG_BLOCK, []) == before
         assert wait_until(lambda: not app.multi.ending), app.multi.ending
 
 
@@ -547,11 +569,12 @@ def check_failed_exec(failure, reason):
 
 
 def check_without_path():
-    """Commands are found even when PATH isn't set."""
-    with mock.patch.dict(os.environ), running_app("echo found; sleep 30") as app:
+    """Commands get a default PATH when the server has none."""
+    command = 'echo "path=$PATH"; sleep 30'
+    with mock.patch.dict(os.environ), running_app(command) as app:
         del os.environ["PATH"]
         send = functools.partial(app_screen, app, new_app_session(app))
-        wait_for_screen(send, "", "found")
+        wait_for_screen(send, "", re.escape(f"path={os.defpath}"))
 
 
 def check_many_descriptors():
