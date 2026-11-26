@@ -45,7 +45,6 @@ import termios
 import threading
 import time
 from importlib import metadata
-from io import BytesIO
 from socket import gethostname
 from socketserver import ThreadingMixIn
 from urllib.parse import urlsplit
@@ -94,6 +93,9 @@ UNPRINTABLE = frozenset(
 # timeouts than the minimum would close terminals that are still open.
 DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
+# Close a new terminal sooner if its page never asks for it again: the reply
+# with its ID was probably lost, and the page given another terminal.
+UNUSED_TIMEOUT = 30
 # Names a request may use for this server. Refusing others stops a website from
 # reaching it by pointing its own name at this machine.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -534,7 +536,7 @@ class Multiplex:
         # Sessions are keyed by an ID that the server chooses, too random to be
         # guessed or, unlike the kernel's file descriptors, to be used again.
         self.proc = {}
-        # why a session was closed, by key, for those whose page should be told
+        # why a session was closed, by key, when there is a reason to give
         self.close_reasons = {}
         self.lock = threading.RLock()
         self.thread = threading.Thread(target=self.loop)
@@ -595,8 +597,9 @@ class Multiplex:
                 "pid": pid,
                 "term": Terminal(w, h),
                 "input": bytearray(),
-                # when the browser last asked for the screen
+                # when the browser last asked for the screen, and how often
                 "seen": time.monotonic(),
+                "shown": 0,
             }
             return key
 
@@ -628,9 +631,12 @@ class Multiplex:
 
     def expire(self):
         """Close the sessions that no browser is showing any more."""
-        cutoff = time.monotonic() - self.timeout
+        now = time.monotonic()
         for key, proc in list(self.proc.items()):
-            if proc["seen"] < cutoff:
+            timeout = self.timeout
+            if proc["shown"] < 2:  # only for the request that started it
+                timeout = min(timeout, UNUSED_TIMEOUT)
+            if proc["seen"] < now - timeout:
                 self.proc_close(key, "because the page was disconnected")
 
     def proc_read(self, key):
@@ -673,6 +679,7 @@ class Multiplex:
         if proc is None:
             return False
         proc["seen"] = time.monotonic()
+        proc["shown"] += 1
         try:
             term = proc["term"]
             if full:
@@ -752,6 +759,9 @@ class AchilTerm:
         # is never given.
         if "X-Achilterm" not in req.headers:
             return refuse(403, "Missing X-Achilterm header. Reload the page.")
+        # Only an empty session ID asks for a new terminal, not a missing one.
+        if "s" not in req.POST:
+            return refuse(400, "Missing session ID. Reload the page.")
         return None
 
     def __call__(self, environ, start_response):
@@ -762,7 +772,7 @@ class AchilTerm:
             return refused(environ, start_response)
         res = webob.Response()
         if to_terminal:
-            session = req.POST.get("s", "")
+            session = req.POST["s"]
             k = req.POST.get("k", "")
             c = req.POST.get("c", "")
             if not session:
@@ -781,20 +791,15 @@ class AchilTerm:
                 # Don't start another terminal in its place: the person may go on
                 # typing as if it were the one that ended.
                 reason = self.multi.close_reasons.get(session)
-                ended = "This terminal session has ended"
-                if reason:
-                    ended = f"{ended} {reason}"
+                ended = " ".join(
+                    filter(None, ["This terminal session has ended", reason])
+                )
                 refused = refuse(410, f"{ended}. Reload the page to start a new one.")
                 return refused(environ, start_response)
             res.content_type = "text/xml"
             res.headers["X-Achilterm-Session"] = session
             res.content_encoding = "gzip"
-            zbuf = BytesIO()
-            zfile = gzip.GzipFile(mode="wb", fileobj=zbuf)
-            zfile.write("".join(dump).encode("utf-8"))
-            zfile.close()
-            zbuf = zbuf.getvalue()
-            res.write(zbuf)
+            res.write(gzip.compress(dump.encode("utf-8")))
         else:
             # Another website mustn't show the terminal inside its own page, where
             # it could trick someone into typing into it.
