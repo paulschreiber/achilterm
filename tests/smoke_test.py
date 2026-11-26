@@ -8,6 +8,7 @@ import os
 import random
 import re
 import resource
+import select
 import signal
 import socket
 import subprocess
@@ -100,7 +101,7 @@ def start_server(*options):
     base = f"http://127.0.0.1:{port}/"
     server = subprocess.Popen(
         [COMMAND, f"--port={port}", "--command=exec /bin/sh", *options],
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     for attempt in range(50):
@@ -461,6 +462,10 @@ def check_stop(stop, ignored_by_command="HUP"):
         return fetch(f"{base}u", terminal_query(session, keys))
 
     try:
+        # The address is written as soon as the server listens, not when it exits.
+        assert select.select([server.stdout], [], [], 5)[0], "no address printed"
+        announced = server.stdout.readline().decode()
+        assert announced == f"Achilterm at http://localhost:{port}/\n", announced
         show = functools.partial(send, new_session(f"{base}u"))
         screen = screen_text(wait_for_screen(show, "", "pid [0-9]+"))
         pid = int(re.search("pid ([0-9]+)", screen)[1])

@@ -1035,7 +1035,8 @@ def main():
             handler_class=handler_class,
             server_class=ThreadingWSGIServer,
         ) as server:
-            print(f"Achilterm at http://localhost:{o.port}/")
+            # the port in use, and at once, even when output goes to a file
+            print(f"Achilterm at http://localhost:{server.server_port}/", flush=True)
 
             def stop():
                 signal.sigwait(stop_signals)
