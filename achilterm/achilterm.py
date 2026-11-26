@@ -34,7 +34,6 @@ import mimetypes
 import optparse
 import os
 import pty
-import pwd
 import re
 import secrets
 import selectors
@@ -964,28 +963,12 @@ def main():
         help="log requests to stderr (default: quiet mode)",
     )
     parser.add_option(
-        "-d",
-        "--daemon",
-        action="store_true",
-        dest="daemon",
-        default=0,
-        help="run as daemon in the background",
-    )
-    parser.add_option(
-        "-P",
-        "--pidfile",
-        dest="pidfile",
-        default="/var/run/achilterm.pid",
-        help="set the pidfile (default: /var/run/achilterm.pid)",
-    )
-    parser.add_option(
         "-i",
         "--index",
         dest="index_file",
         default=0,
         help="default index file (default: achilterm.html)",
     )
-    parser.add_option("-u", "--uid", dest="uid", help="set the daemon's user id")
     parser.add_option(
         "-w", "--width", dest="width", default="80", help="set the width (default: 80)"
     )
@@ -1021,27 +1004,7 @@ def main():
             allowed_host(host)
         except ValueError as error:
             parser.error(f"--allow-host: {error}")
-    if o.daemon:
-        pid = os.fork()
-        if pid == 0:
-            # os.setsid() ?
-            os.setpgrp()
-            with open(os.devnull) as nullin, open(os.devnull, "w") as nullout:
-                os.dup2(nullin.fileno(), sys.stdin.fileno())
-                os.dup2(nullout.fileno(), sys.stdout.fileno())
-                os.dup2(nullout.fileno(), sys.stderr.fileno())
-            if os.getuid() == 0 and o.uid:
-                try:
-                    os.setuid(int(o.uid))
-                except (ValueError, OSError):
-                    os.setuid(pwd.getpwnam(o.uid).pw_uid)
-        else:
-            with contextlib.suppress(OSError), open(o.pidfile, "w+") as pidfile:
-                pidfile.write(str(pid) + "\n")
-            print(f"Achilterm at http://localhost:{o.port}/ pid: {pid:d}")
-            sys.exit(0)
-    else:
-        print(f"Achilterm at http://localhost:{o.port}/")
+    print(f"Achilterm at http://localhost:{o.port}/")
     if o.log:
         handler_class = WSGIRequestHandler
     else:
