@@ -43,8 +43,9 @@ p.source {
 	margin: 4px;
 	font: 11px sans-serif;
 }
-/* A long message wraps to the width of the screen, if there is one. */
-#term:has(pre.term) p {
+/* Once there is a screen, long messages wrap to its width, though never to a
+   very narrow column. */
+#term.shown p {
 	width: 0;
-	min-width: 100%;
+	min-width: max(100%, 30em);
 }

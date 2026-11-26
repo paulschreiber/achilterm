@@ -3,7 +3,7 @@ pre.stat {
 	padding: 4px;
 	display: block;
 	font-family: monospace;
-	white-space: pre;
+	white-space: pre-wrap;
 	background-color: black;
 	border-top: 1px solid black;
 	color: white;
@@ -69,9 +69,9 @@ p.source {
 	margin: 4px;
 	font: 11px sans-serif;
 }
-/* A long message wraps to the width of the screen, if there is one. */
-#term:has(pre.term) pre.stat {
+/* Once there is a screen, long messages wrap to its width, though no narrower
+   than the buttons need. */
+#term.shown pre.stat {
 	width: 0;
-	min-width: calc(100% - 8px);
-	white-space: pre-wrap;
+	min-width: max(100% - 8px, 20ch);
 }

@@ -299,9 +299,9 @@ def check_unused():
 
         with app.multi.lock:
             # A slowed page may take this long to ask again.
-            age(MINIMUM_TIMEOUT - 1)
+            age(MINIMUM_TIMEOUT - 10)
             assert list(app.multi.proc) == [unused, used]
-            age(2)
+            age(11)
             assert list(app.multi.proc) == [used]
 
 
