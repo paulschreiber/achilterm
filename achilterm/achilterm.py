@@ -22,6 +22,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import argparse
 import array
 import codecs
 import contextlib
@@ -31,7 +32,6 @@ import gzip
 import html
 import logging
 import mimetypes
-import optparse
 import os
 import pty
 import re
@@ -141,21 +141,15 @@ def clamp(value, low, high):
     return max(low, min(value, high))
 
 
-def decimal_number(value):
-    """value as a number if it's a whole one written in decimal, otherwise None."""
-    # With any leading zeros, and without cutting off fractions.
-    with contextlib.suppress(ValueError):
-        return int(str(value))
-    return None
-
-
 def whole_number(value, name, allowed):
-    """A setting such as a width as a number, if it is one of those allowed."""
-    number = decimal_number(value)
-    if number is None or number not in allowed:
-        smallest, largest = allowed[0], allowed[-1]
-        raise ValueError(f"{name} must be a whole number from {smallest} to {largest}")
-    return number
+    """A width or height as a number, if it is one of those allowed."""
+    with contextlib.suppress(ValueError):
+        # In decimal, with any leading zeros, and without cutting off fractions.
+        number = int(str(value))
+        if number in allowed:
+            return number
+    smallest, largest = allowed[0], allowed[-1]
+    raise ValueError(f"{name} must be a whole number from {smallest} to {largest}")
 
 
 def requested_size(fields):
@@ -984,58 +978,58 @@ class NoLogWSGIRequestHandler(WSGIRequestHandler):
 
 
 def main():
-    parser = optparse.OptionParser(version="Achilterm version " + __version__)
-    parser.add_option(
+    parser = argparse.ArgumentParser(usage="%(prog)s [options]")
+    parser.add_argument(
+        "--version", action="version", version="Achilterm version " + __version__
+    )
+    parser.add_argument(
         "-p",
         "--port",
-        dest="port",
-        default="8022",
-        help="set the TCP port (default: 8022)",
+        type=int,
+        default=8022,
+        help="set the TCP port (default: %(default)s)",
     )
-    parser.add_option(
+    parser.add_argument(
         "-c",
         "--command",
         dest="cmd",
-        default=None,
+        metavar="CMD",
         help="set the command (default: /bin/login or ssh localhost)",
     )
-    parser.add_option(
+    parser.add_argument(
         "-l",
         "--log",
         action="store_true",
-        dest="log",
-        default=0,
         help="log requests to stderr (default: quiet mode)",
     )
-    parser.add_option(
+    parser.add_argument(
         "-i",
         "--index",
         dest="index_file",
-        default=0,
+        metavar="INDEX_FILE",
         help="default index file (default: achilterm.html)",
     )
-    parser.add_option(
+    parser.add_argument(
         "-w",
         "--width",
-        dest="width",
         default=DEFAULT_WIDTH,
-        help=f"set the width, from {WIDTHS[0]} to {WIDTHS[-1]} (default: %default)",
+        help=f"set the width, from {WIDTHS[0]} to {WIDTHS[-1]} (default: %(default)s)",
     )
-    parser.add_option(
+    parser.add_argument(
         "-H",
         "--height",
-        dest="height",
         default=DEFAULT_HEIGHT,
-        help=f"set the height, from {HEIGHTS[0]} to {HEIGHTS[-1]} (default: %default)",
+        help=f"set the height, from {HEIGHTS[0]} to {HEIGHTS[-1]} "
+        "(default: %(default)s)",
     )
-    parser.add_option(
+    parser.add_argument(
         "--timeout",
-        dest="timeout",
+        type=int,
         default=DEFAULT_TIMEOUT,
         help="close a terminal not shown by a browser for this many seconds "
-        f"(default: %default, at least {MINIMUM_TIMEOUT})",
+        f"(default: %(default)s, at least {MINIMUM_TIMEOUT})",
     )
-    parser.add_option(
+    parser.add_argument(
         "--allow-host",
         action="append",
         dest="allow_hosts",
@@ -1044,22 +1038,22 @@ def main():
         help="also accept requests for this host name; repeat for more "
         "(default: only localhost)",
     )
-    (o, _a) = parser.parse_args()
+    args = parser.parse_args()
+    if args.port not in PORTS:
+        parser.error(f"--port must be from {PORTS[0]} to {PORTS[-1]}")
+    if args.timeout < MINIMUM_TIMEOUT:
+        parser.error(f"--timeout must be at least {MINIMUM_TIMEOUT} seconds")
     try:
-        width = whole_number(o.width, "--width", WIDTHS)
-        height = whole_number(o.height, "--height", HEIGHTS)
-        port = whole_number(o.port, "--port", PORTS)
+        width = whole_number(args.width, "--width", WIDTHS)
+        height = whole_number(args.height, "--height", HEIGHTS)
     except ValueError as error:
         parser.error(str(error))
-    timeout = decimal_number(o.timeout)
-    if timeout is None or timeout < MINIMUM_TIMEOUT:
-        parser.error(f"--timeout must be a whole number, at least {MINIMUM_TIMEOUT}")
-    for host in o.allow_hosts:
+    for host in args.allow_hosts:
         try:
             allowed_host(host)
         except ValueError as error:
             parser.error(f"--allow-host: {error}")
-    if o.log:
+    if args.log:
         handler_class = WSGIRequestHandler
     else:
         handler_class = NoLogWSGIRequestHandler
@@ -1071,21 +1065,21 @@ def main():
         signum for signum in STOP_SIGNALS if signal.getsignal(signum) != signal.SIG_IGN
     }
     signal.pthread_sigmask(signal.SIG_BLOCK, stop_signals)
-    index_file = os.path.abspath(o.index_file) if o.index_file else None
+    index_file = os.path.abspath(args.index_file) if args.index_file else None
     at = AchilTerm(
-        o.cmd,
+        args.cmd,
         index_file=index_file,
         width=width,
         height=height,
-        timeout=timeout,
-        allow_hosts=o.allow_hosts,
+        timeout=args.timeout,
+        allow_hosts=args.allow_hosts,
     )
 
     try:
         # Closing the server before the terminals refuses requests made meanwhile.
         with make_server(
             "localhost",
-            port,
+            args.port,
             at,
             handler_class=handler_class,
             server_class=ThreadingWSGIServer,

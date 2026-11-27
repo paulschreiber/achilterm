@@ -134,19 +134,19 @@ Commandline usage
     usage: achilterm [options]
 
     options:
-      --version                  show program's version number and exit
-      -h, --help                 show this help message and exit
-      -p PORT, --port=PORT       set the TCP port (default: 8022)
-      -c CMD, --command=CMD      set the command (default: /bin/login or ssh localhost)
-      -l, --log                  log requests to stderr (default: quiet mode)
-      -i INDEX_FILE, --index=INDEX_FILE
-                                 default index file (default: achilterm.html)
-      -w WIDTH, --width=WIDTH    set the width, from 3 to 255 (default: 80)
-      -H HEIGHT, --height=HEIGHT set the height, from 3 to 99 (default: 25)
-      --timeout=TIMEOUT          close a terminal not shown by a browser for this
-                                 many seconds (default: 300, at least 90)
-      --allow-host=NAME          also accept requests for this host name; repeat
-                                 for more (default: only localhost)
+      -h, --help            show this help message and exit
+      --version             show program's version number and exit
+      -p, --port PORT       set the TCP port (default: 8022)
+      -c, --command CMD     set the command (default: /bin/login or ssh localhost)
+      -l, --log             log requests to stderr (default: quiet mode)
+      -i, --index INDEX_FILE
+                            default index file (default: achilterm.html)
+      -w, --width WIDTH     set the width, from 3 to 255 (default: 80)
+      -H, --height HEIGHT   set the height, from 3 to 99 (default: 25)
+      --timeout TIMEOUT     close a terminal not shown by a browser for this many
+                            seconds (default: 300, at least 90)
+      --allow-host NAME     also accept requests for this host name; repeat for
+                            more (default: only localhost)
 
 Apache configuration example
 ----------------------------
@@ -243,6 +243,9 @@ Changelog
    it or serving a blank page, and fix a server error for a request with a size
    that isn't a number; sizes are now read as decimal, so forms such as ``0x50``
    are rejected and ``0120`` means 120
+
+-  Reject unexpected command-line arguments instead of ignoring them; a command
+   that starts with ``-`` must now be given as ``--command=...``
 
 -  Reject a ``--port`` that isn't a number from 0 to 65535 with a usage error,
    instead of a traceback
