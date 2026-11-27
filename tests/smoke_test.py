@@ -862,48 +862,60 @@ def check_content_types():
 
 
 def check_stalled_requests():
-    """A request that stops arriving doesn't keep the server waiting."""
+    """A silent request isn't waited for forever, but a slow reply isn't cut off."""
     head = (
         b"POST /u HTTP/1.1\r\nHost: localhost\r\nX-Achilterm: 1\r\n"
         b"Content-Type: application/x-www-form-urlencoded\r\n"
         b"Content-Length: 100\r\n"
     )
-    for handler in (RequestHandler, NoLogWSGIRequestHandler):
-        with (
-            mock.patch.object(RequestHandler, "timeout", 0.5),
-            mock.patch.object(RequestHandler, "log_message") as log,
-            running_app("sleep 30") as app,
-            make_server(
-                "127.0.0.1",
-                0,
-                app,
-                server_class=ThreadingWSGIServer,
-                handler_class=handler,
-            ) as server,
-        ):
-            errors = []
-            server.handle_error = lambda *args, errors=errors: errors.append(args)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            try:
-                # Nothing at all, part of the headers, and part of the body.
-                for sent, expected in (
-                    (b"", b""),
-                    (head, b""),
-                    (head + b"\r\ns=", b"HTTP/1.0 408 "),
-                ):
-                    address = ("127.0.0.1", server.server_port)
-                    with socket.create_connection(address, timeout=10) as link:
-                        link.sendall(sent)
-                        reply = b"".join(iter(functools.partial(link.recv, 4096), b""))
-                    assert reply[: len(expected) or None] == expected, (sent, reply)
-            finally:
-                server.shutdown()
-            assert not errors, errors
-            assert not app.multi.proc, "a stalled request started a terminal"
+    page = b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    limit = 0.2
+
+    def exchange_bytes(server, sent, pause=0):
+        """All that comes back, read after a pause."""
+        with socket.create_connection(server.server_address, timeout=10) as link:
+            link.sendall(sent)
+            time.sleep(pause)
+            with link.makefile("rb") as replies:
+                return replies.read()
+
+    with (
+        mock.patch.object(RequestHandler, "timeout", limit),
+        running_app("sleep 30") as app,
+    ):
+        # Far more than the connection holds while nothing is being read.
+        app.files["index"] = "x" * 2**25
+        for handler in (RequestHandler, NoLogWSGIRequestHandler):
+            with (
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                make_server(
+                    "127.0.0.1",
+                    0,
+                    app,
+                    server_class=ThreadingWSGIServer,
+                    handler_class=handler,
+                ) as server,
+            ):
+                threading.Thread(target=server.serve_forever, daemon=True).start()
+                try:
+                    # Nothing at all, part of the headers, and part of the body.
+                    for sent, expected in (
+                        (b"", b""),
+                        (head, b""),
+                        (head + b"\r\ns=", b"HTTP/1.0 408 "),
+                    ):
+                        reply = exchange_bytes(server, sent)
+                        assert reply[:13] == expected, (sent, reply)
+                    reply = exchange_bytes(server, page, pause=limit * 3)
+                    body = reply.partition(b"\r\n\r\n")[2]
+                    assert len(body) == 2**25, len(body)
+                finally:
+                    server.shutdown()
+            errors = stderr.getvalue()
+            assert "Traceback" not in errors, errors
             # Requests are only logged if asked for.
-            if handler is RequestHandler:
-                assert "timed out" in str(log.call_args_list), log.call_args_list
+            assert ("timed out" in errors) == (handler is RequestHandler), errors
+        assert not app.multi.proc, "a stalled request started a terminal"
 
 
 def check_many_descriptors():

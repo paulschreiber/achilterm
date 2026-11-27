@@ -95,8 +95,8 @@ DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
 # The TCP ports the server can be given; 0 picks a free one.
 PORTS = range(65536)
-# Give up on a connection that has been silent for this many seconds, in the
-# middle of a request or before one. The page gives up on a reply sooner.
+# Give up on a request after this many seconds of silence, whether or not any of
+# it has arrived. The page gives up on a reply sooner.
 REQUEST_TIMEOUT = 30
 # Kill what's left of a closed terminal's command after this many seconds.
 KILL_DELAY = 5
@@ -978,6 +978,18 @@ class AchilTerm:
 class RequestHandler(WSGIRequestHandler):
     # Without this, a request that stops arriving keeps its thread waiting.
     timeout = REQUEST_TIMEOUT
+
+    def setup(self):
+        super().setup()
+        send = self.wfile.write
+
+        def send_without_limit(data):
+            # The limit would apply to the whole of a reply, cutting off a large
+            # one on a slow connection.
+            self.connection.settimeout(None)
+            return send(data)
+
+        self.wfile.write = send_without_limit
 
     def handle(self):
         try:
