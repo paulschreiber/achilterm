@@ -261,6 +261,9 @@ Changelog
 -  Refuse unreadable or cut-off terminal requests instead of failing with a
    server error
 
+-  Close a connection that stays silent for 30 seconds, instead of waiting for
+   the rest of its request forever
+
 -  Fix large input, such as a long paste, being cut off
 
 -  Fix escape sequences that could stop or stall every terminal, move the

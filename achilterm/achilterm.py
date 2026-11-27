@@ -95,6 +95,9 @@ DEFAULT_TIMEOUT = 300
 MINIMUM_TIMEOUT = 90
 # The TCP ports the server can be given; 0 picks a free one.
 PORTS = range(65536)
+# Give up on a connection that has been silent for this many seconds, in the
+# middle of a request or before one. The page gives up on a reply sooner.
+REQUEST_TIMEOUT = 30
 # Kill what's left of a closed terminal's command after this many seconds.
 KILL_DELAY = 5
 # The sizes a terminal can have, and the usual one.
@@ -912,7 +915,7 @@ class AchilTerm:
             return refuse(415, "Send a URL-encoded UTF-8 form. Reload the page.")
         try:
             fields = req.POST
-        except DisconnectionError:
+        except (DisconnectionError, TimeoutError):  # it ended early, or stopped
             # The page tries again after this status.
             return refuse(408, "The request was cut off.")
         # Only an empty session ID asks for a new terminal, not a missing one.
@@ -972,7 +975,18 @@ class AchilTerm:
         return res(environ, start_response)
 
 
-class NoLogWSGIRequestHandler(WSGIRequestHandler):
+class RequestHandler(WSGIRequestHandler):
+    # Without this, a request that stops arriving keeps its thread waiting.
+    timeout = REQUEST_TIMEOUT
+
+    def handle(self):
+        try:
+            super().handle()
+        except TimeoutError as error:
+            self.log_error("Request timed out: %r", error)
+
+
+class NoLogWSGIRequestHandler(RequestHandler):
     def log_message(self, format, *args):
         pass
 
@@ -1052,7 +1066,7 @@ def main():
         except ValueError as error:
             parser.error(f"--allow-host: {error}")
     if args.log:
-        handler_class = WSGIRequestHandler
+        handler_class = RequestHandler
     else:
         handler_class = NoLogWSGIRequestHandler
     # Close the terminals when stopped, as by Ctrl-C, kill or closing the terminal
