@@ -993,7 +993,6 @@ def main():
         "-c",
         "--command",
         dest="cmd",
-        metavar="CMD",
         help="set the command (default: /bin/login or ssh localhost)",
     )
     parser.add_argument(
@@ -1006,7 +1005,6 @@ def main():
         "-i",
         "--index",
         dest="index_file",
-        metavar="INDEX_FILE",
         help="default index file (default: achilterm.html)",
     )
     parser.add_argument(
@@ -1039,6 +1037,10 @@ def main():
         "(default: only localhost)",
     )
     args = parser.parse_args()
+    # Some versions of argparse give an empty list for a value of just "--".
+    given = [value for name, value in vars(args).items() if name != "allow_hosts"]
+    if [] in given + args.allow_hosts:
+        parser.error('"--" can\'t be used as a value')
     if args.port not in PORTS:
         parser.error(f"--port must be from {PORTS[0]} to {PORTS[-1]}")
     if args.timeout < MINIMUM_TIMEOUT:

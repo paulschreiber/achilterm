@@ -190,6 +190,7 @@ def check_access():
 
     for option in (
         "unexpected",
+        "--timeout=--",
         "--timeout=89",
         "--timeout=0x100",
         "--timeout=300.5",
