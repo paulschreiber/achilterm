@@ -244,8 +244,9 @@ Changelog
    that isn't a number; sizes are now read as decimal, so forms such as ``0x50``
    are rejected and ``0120`` means 120
 
--  Reject unexpected command-line arguments instead of ignoring them; a command
-   that starts with ``-`` must now be given as ``--command=...``
+-  Reject unexpected command-line arguments instead of ignoring them; an
+   option's value that starts with ``-`` must now be joined to it, as in
+   ``--command=...``
 
 -  Reject a ``--port`` that isn't a number from 0 to 65535 with a usage error,
    instead of a traceback
