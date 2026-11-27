@@ -189,6 +189,7 @@ def check_access():
     assert "Traceback" not in errors, errors
 
     for option in (
+        "unexpected",
         "--timeout=89",
         "--timeout=0x100",
         "--timeout=300.5",
