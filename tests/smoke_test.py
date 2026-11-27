@@ -14,6 +14,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import unittest
 import urllib.error
@@ -21,6 +22,7 @@ import urllib.parse
 import urllib.request
 from importlib.metadata import version
 from unittest import mock
+from wsgiref.simple_server import make_server
 from xml.etree import ElementTree
 
 import webob
@@ -30,7 +32,10 @@ from achilterm.achilterm import (
     MINIMUM_TIMEOUT,
     STOP_SIGNALS,
     AchilTerm,
+    NoLogWSGIRequestHandler,
+    RequestHandler,
     Terminal,
+    ThreadingWSGIServer,
     requested_size,
 )
 
@@ -856,6 +861,51 @@ def check_content_types():
             assert status(content_type) == 200, content_type
 
 
+def check_stalled_requests():
+    """A request that stops arriving doesn't keep the server waiting."""
+    head = (
+        b"POST /u HTTP/1.1\r\nHost: localhost\r\nX-Achilterm: 1\r\n"
+        b"Content-Type: application/x-www-form-urlencoded\r\n"
+        b"Content-Length: 100\r\n"
+    )
+    for handler in (RequestHandler, NoLogWSGIRequestHandler):
+        with (
+            mock.patch.object(RequestHandler, "timeout", 0.5),
+            mock.patch.object(RequestHandler, "log_message") as log,
+            running_app("sleep 30") as app,
+            make_server(
+                "127.0.0.1",
+                0,
+                app,
+                server_class=ThreadingWSGIServer,
+                handler_class=handler,
+            ) as server,
+        ):
+            errors = []
+            server.handle_error = lambda *args, errors=errors: errors.append(args)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                # Nothing at all, part of the headers, and part of the body.
+                for sent, expected in (
+                    (b"", b""),
+                    (head, b""),
+                    (head + b"\r\ns=", b"HTTP/1.0 408 "),
+                ):
+                    address = ("127.0.0.1", server.server_port)
+                    with socket.create_connection(address, timeout=10) as link:
+                        link.sendall(sent)
+                        reply = b"".join(iter(functools.partial(link.recv, 4096), b""))
+                    assert reply[: len(expected) or None] == expected, (sent, reply)
+            finally:
+                server.shutdown()
+            assert not errors, errors
+            assert not app.multi.proc, "a stalled request started a terminal"
+            # Requests are only logged if asked for.
+            if handler is RequestHandler:
+                assert "timed out" in str(log.call_args_list), log.call_args_list
+
+
 def check_many_descriptors():
     """Terminals must work when their descriptors are numbered 1024 or higher."""
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -1013,6 +1063,7 @@ def main():
     check_without_path()
     check_sizes()
     check_content_types()
+    check_stalled_requests()
     check_many_descriptors()
     check_announcement()
     print("smoke test passed")
